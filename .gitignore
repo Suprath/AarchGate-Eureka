@@ -51,3 +51,4 @@ Thumbs.db
 
 # Large Benchmark Datasets
 benchmark_logs.json
+*.agb
