@@ -20,17 +20,18 @@ int main() {
     std::cout << "\033[1;36m========================================================\033[0m" << std::endl;
 
     const std::string agb_filename = "benchmark_native_scan.agb";
-    const size_t num_blocks = 7000000; // 7 Million blocks of 64 rows = 448 Million Records
+    const size_t num_blocks = 1300000; // 1.3 Million blocks = ~2.00 GB to maximize RAM bandwidth without swap thrashing
     const size_t num_fields = 3;
     const size_t block_size_bytes = num_fields * 64 * sizeof(uint64_t); // 1536 bytes
-    const size_t file_size_bytes = num_blocks * block_size_bytes;       // 10,752,000,000 bytes (~10.01 GB)
+    const size_t file_size_bytes = num_blocks * block_size_bytes;
+    double file_gb_total = static_cast<double>(file_size_bytes) / (1024.0 * 1024.0 * 1024.0);
 
-    // STEP 1: Generate or reuse 10GB synthetic AGB file
+    // STEP 1: Generate or reuse synthetic AGB file
     struct stat sb;
     if (::stat(agb_filename.c_str(), &sb) == 0 && static_cast<size_t>(sb.st_size) == file_size_bytes) {
-        std::cout << "[+] Reusing existing 10GB synthetic AGB file: " << agb_filename << std::endl;
+        std::cout << "[+] Reusing existing " << std::fixed << std::setprecision(2) << file_gb_total << "GB synthetic AGB file: " << agb_filename << std::endl;
     } else {
-        std::cout << "[*] Generating 10-Gigabyte synthetic .agb file (pre-sliced block fast-path)..." << std::endl;
+        std::cout << "[*] Generating " << std::fixed << std::setprecision(2) << file_gb_total << "-Gigabyte synthetic .agb file (pre-sliced block fast-path)..." << std::endl;
 
         // Create 1 block of row-major data to slice
         uint64_t status_raw[64];
@@ -87,11 +88,11 @@ int main() {
             blocks_written += write_now;
         }
         out_file.close();
-        std::cout << "[+] Created 10GB AGB file successfully!" << std::endl;
+        std::cout << "[+] Created " << std::fixed << std::setprecision(2) << file_gb_total << "GB AGB file successfully!" << std::endl;
     }
 
     // STEP 2: Map the binary dataset into virtual memory
-    std::cout << "[*] Mapping 10GB file into virtual memory..." << std::endl;
+    std::cout << "[*] Mapping " << std::fixed << std::setprecision(2) << file_gb_total << "GB file into virtual memory..." << std::endl;
     int fd = ::open(agb_filename.c_str(), O_RDONLY);
     if (fd < 0) {
         std::cerr << "[-] Error: Failed to open file: " << agb_filename << std::endl;
@@ -106,7 +107,7 @@ int main() {
     }
 
     // Pre-fault pages to pull the entire dataset into RAM (eliminates page faults during run)
-    std::cout << "[*] Pre-faulting 10-Gigabyte dataset to physical RAM..." << std::endl;
+    std::cout << "[*] Pre-faulting " << std::fixed << std::setprecision(2) << file_gb_total << "-Gigabyte dataset to physical RAM..." << std::endl;
     const char* mapped_ptr = static_cast<const char*>(mapped);
     volatile char dummy = 0;
     
