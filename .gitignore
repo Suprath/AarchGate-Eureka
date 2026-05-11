@@ -48,3 +48,6 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Large Benchmark Datasets
+benchmark_logs.json

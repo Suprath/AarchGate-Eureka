@@ -1,62 +1,36 @@
 cmake_minimum_required(VERSION 3.18)
-project(AarchGate_Eureka VERSION 1.0.0 LANGUAGES CXX OBJCXX)
+project(AarchGateEureka LANGUAGES CXX)
 
-# C++20 Standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Optimization Flags
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -ffast-math -fno-finite-math-only -Wall -Wextra")
-if(APPLE)
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mcpu=apple-m3")
-endif()
-
-# Thread Support
-find_package(Threads REQUIRED)
-
-# Add Submodules/Libraries
+# 1. Bring in the AarchGate core library from submodule
 add_subdirectory(external/AarchGate-ML)
 
-# Add our custom include directories
+# 2. Define include directories
 include_directories(
-    include
-    external/AarchGate-ML/external/AarchGate/include
-    external/AarchGate-ML/external/AarchGate/external/asmjit/src
-    external/AarchGate-ML/external/AarchGate/external/highway
+  include
+  external/simdjson
+  external/AarchGate-ML/external/AarchGate/include
 )
 
-# Core Eureka Library
-add_library(eureka_core SHARED
-    src/circuits.cpp
-    src/evaluator.cpp
+# 3. Compile our custom Lex logic, double-buffered ingester, and standalone simdjson
+add_library(eureka_lex STATIC
+  src/lex/ingester.cpp
+  src/lex/dispatcher.cpp
+  external/simdjson/simdjson.cpp
 )
+target_link_libraries(eureka_lex PRIVATE aarchgate)
 
-target_link_libraries(eureka_core PUBLIC
-    aarchgate
-    Threads::Threads
+# 4. Compile the ag-lex CLI grep-killer binary
+add_executable(ag-lex
+  bin/ag-lex.cpp
 )
+target_link_libraries(ag-lex PRIVATE eureka_lex aarchgate)
 
-# Set target properties
-set_target_properties(eureka_core PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
-)
-
-# If Apple, link with Metal Frameworks
-if(APPLE)
-    target_link_libraries(eureka_core PRIVATE
-        "-framework Metal"
-        "-framework Foundation"
-        "-framework QuartzCore"
-    )
-endif()
-
-# Tests
-option(EUREKA_BUILD_TESTS "Build Eureka tests" ON)
-if(EUREKA_BUILD_TESTS)
-    enable_testing()
-    add_executable(test_accuracy tests/test_accuracy.cpp)
-    target_link_libraries(test_accuracy PRIVATE eureka_core)
-    add_test(NAME test_accuracy COMMAND test_accuracy)
+# Enable custom release optimizations
+if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
+  target_compile_options(eureka_lex PRIVATE -O3 -ffast-math)
+  target_compile_options(ag-lex PRIVATE -O3 -ffast-math)
 endif()
