@@ -65,19 +65,66 @@ The `.agb` format is a streamlined, zero-copy binary layout designed to point CP
 
 ---
 
-## 🛠️ Translating JSON Logs to `.agb`
-
-To convert a standard NDJSON log file to the high-performance `.agb` bit-sliced format:
+## 📁 Translating JSON Logs to `.agb` & Companion `.idx`
+To convert a standard NDJSON log file to our high-performance bit-sliced layout while retaining human-readable record readability, execute:
 
 ```bash
 ./build/ag-lex --convert input_logs.json output_logs.agb
 ```
 
+During this conversion, Eureka's parser generates two tightly paired outputs:
+1. **`output_logs.agb`**: The core binary database containing the bit-planes of all indexed scalar fields.
+2. **`output_logs.agb.idx`**: A sequential companion array of `uint64_t` byte offsets mapping each block record back to its exact starting location in the original raw JSON log file.
+
+---
+
+## 🔍 Log Readability & Deferred Reconstruction (Two-Pass Mechanics)
+To solve the **Log Readability** problem, Eureka implements **Two-Pass Deferred Materialization (Hybrid Index/Payload Architecture)**. Instead of parsing and decoding large verbose log text messages during scanning, we defer text extraction entirely until after filtering:
+
+1. **Pass 1 (Logical JIT Scan)**: Sweeps through the columnar `.agb` bit-planes at memory-bus speeds (**~61 GB/s**), identifying all matches and returning a compact row matching bitmask in under a millisecond.
+2. **Pass 2 (Deferred Seek & Load)**: For any matching rows, the engine consults the companion `.agb.idx` file, seeks directly to those byte offsets in the original raw JSON file, and materializes the original, pretty, human-readable records instantly.
+
+---
+
+## ⚡ Running the Readability & Reconstruction Benchmark
+We have created a rigorous, dedicated verification benchmark to evaluate reconstruction overhead and verify full-text log readability:
+
+```bash
+./build/bench_reconstruct
+```
+
+This benchmark generates **500,000 synthetic JSON log lines** with highly verbose string payload fields, compiles a JIT condition (`status == 200 AND latency > 100`), converts them to `.agb` / `.agb.idx` pair on the fly, evaluates both passes, and presents matching records in full JSON detail.
+
+### 📊 Deferred Reconstruction Scoreboard
+
+```ansi
+========================================================
+       AARCHGATE-LEX // LOG READABILITY & RECONSTRUCT   
+========================================================
+  TOTAL SCANNED LOGS      : 500000 lines
+  TOTAL MATCHES LOCATED   : 1000
+  TOTAL MATCHES RETRIEVED : 1000
+--------------------------------------------------------
+  PASS 1: JIT LOGIC SCAN TIME : 0.967 ms (61.05 GB/sec)
+  PASS 2: SCAN + DEFERRED RECONSTRUCT : 1.148 ms (51.43 GB/sec)
+  RECONSTRUCTION OVERHEAD     : 0.181 ms (181 μs)
+========================================================
+
+[+] PROVING LOG READABILITY: FIRST 3 MATCHED ORIGINAL LOG RECONSTRUCTIONS:
+   Match #1 (File Offset 0x0):
+   {"status":200,"latency":150,"message":"CRITICAL_ERROR: Database transactional engine failed to commit lock on segment 0. Retry count exceeded."}
+   --------------------------------------------------------
+   Match #2 (File Offset 0xf1e1):
+   {"status":200,"latency":150,"message":"CRITICAL_ERROR: Database transactional engine failed to commit lock on segment 500. Retry count exceeded."}
+```
+
+> [!IMPORTANT]
+> Because we defer text extraction, retrieving and re-assembling 1,000 highly verbose original JSON logs takes only **181 microseconds**, allowing you to maintain massive sustained query throughputs of **51.43 GB/s** with zero readability compromise!
+
 ---
 
 ## ⚡ Running the Saturation Benchmark
-
-The benchmark generates an optimal **1.86 GB AGB file**, memory-maps it, pre-faults page tables to load it into active RAM, compiles a 3-field expression to raw machine code, and runs parallel evaluations:
+The pure physical hardware bus saturation benchmark generates an optimal **1.86 GB AGB file**, memory-maps it, pre-faults page tables to load it into active RAM, compiles a 3-field expression, and runs parallel evaluations:
 
 ```bash
 ./build/bench_native_scan
@@ -85,7 +132,7 @@ The benchmark generates an optimal **1.86 GB AGB file**, memory-maps it, pre-fau
 
 ### 🏆 Local Silicon Scoreboard
 
-Evaluating the complex expression `status == 500 AND latency > 100 AND severity == 3` on 4 performance cores:
+Evaluating `status == 500 AND latency > 100 AND severity == 3` on 4 performance cores:
 
 ```ansi
 ========================================================
