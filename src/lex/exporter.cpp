@@ -22,6 +22,13 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
         return false;
     }
 
+    std::string idx_path = agb_path + ".idx";
+    std::ofstream out_idx(idx_path, std::ios::binary | std::ios::trunc);
+    if (!out_idx) {
+        std::cerr << "[-] Error creating index file: " << idx_path << std::endl;
+        return false;
+    }
+
     simdjson::ondemand::parser parser;
     size_t record_count = 0;
     size_t block_count = 0;
@@ -38,6 +45,7 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
         apex::compute::BitSlicer slicer;
         std::vector<uint64_t> status_buf(64, 0);
         std::vector<uint64_t> latency_buf(64, 0);
+        std::vector<uint64_t> offset_buf(64, 0);
         size_t current_count = 0;
 
         uint64_t status_planes[64];
@@ -48,6 +56,17 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
                 continue;
             }
             auto doc = doc_res.value();
+
+            // Calculate byte offset using raw_json()
+            uint64_t offset = 0;
+            std::string_view raw_json_str;
+            auto raw_res = doc.raw_json();
+            if (!raw_res.error()) {
+                raw_json_str = raw_res.value();
+                if (!raw_json_str.empty()) {
+                    offset = static_cast<uint64_t>(raw_json_str.data() - json_view.data());
+                }
+            }
 
             // Extract status
             uint64_t status_val = 0;
@@ -65,6 +84,7 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
 
             status_buf[current_count] = status_val;
             latency_buf[current_count] = latency_val;
+            offset_buf[current_count] = offset;
             current_count++;
             record_count++;
 
@@ -74,6 +94,7 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
 
                 out_file.write(reinterpret_cast<const char*>(status_planes), 64 * sizeof(uint64_t));
                 out_file.write(reinterpret_cast<const char*>(latency_planes), 64 * sizeof(uint64_t));
+                out_idx.write(reinterpret_cast<const char*>(offset_buf.data()), 64 * sizeof(uint64_t));
 
                 current_count = 0;
                 block_count++;
@@ -85,6 +106,7 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
             for (size_t i = current_count; i < 64; ++i) {
                 status_buf[i] = 0;
                 latency_buf[i] = 0;
+                offset_buf[i] = 0;
             }
 
             slicer.slice_n(status_buf.data(), 64, status_planes, 64);
@@ -92,6 +114,7 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
 
             out_file.write(reinterpret_cast<const char*>(status_planes), 64 * sizeof(uint64_t));
             out_file.write(reinterpret_cast<const char*>(latency_planes), 64 * sizeof(uint64_t));
+            out_idx.write(reinterpret_cast<const char*>(offset_buf.data()), 64 * sizeof(uint64_t));
             block_count++;
         }
 
@@ -103,7 +126,8 @@ bool convert_json_to_agb(const std::string& json_path, const std::string& agb_pa
     std::cout << "[+] Conversion complete!" << std::endl;
     std::cout << "    - Total Records processed : " << record_count << std::endl;
     std::cout << "    - Total 64-record blocks  : " << block_count << std::endl;
-    std::cout << "    - File Size written       : " << block_count * 128 * sizeof(uint64_t) << " bytes" << std::endl;
+    std::cout << "    - Binary file size        : " << block_count * 128 * sizeof(uint64_t) << " bytes" << std::endl;
+    std::cout << "    - Companion index size    : " << block_count * 64 * sizeof(uint64_t) << " bytes" << std::endl;
 
     return true;
 }

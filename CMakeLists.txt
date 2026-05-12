@@ -36,9 +36,16 @@ add_executable(bench_native_scan
 )
 target_link_libraries(bench_native_scan PRIVATE eureka_lex aarchgate)
 
+# 6. Compile the deferred reconstruction (log readability) comparison benchmark
+add_executable(bench_reconstruct
+  benchmarks/bench_reconstruct.cpp
+)
+target_link_libraries(bench_reconstruct PRIVATE eureka_lex aarchgate)
+
 # Enable custom release optimizations
 if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
   target_compile_options(eureka_lex PRIVATE -O3 -ffast-math)
   target_compile_options(ag-lex PRIVATE -O3 -ffast-math)
   target_compile_options(bench_native_scan PRIVATE -O3 -ffast-math)
+  target_compile_options(bench_reconstruct PRIVATE -O3 -ffast-math)
 endif()
