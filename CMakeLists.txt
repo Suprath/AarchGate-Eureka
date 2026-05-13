@@ -46,6 +46,11 @@ add_executable(bench_reconstruct
 )
 target_link_libraries(bench_reconstruct PRIVATE eureka_lex aarchgate)
 
+add_executable(bench_v2_speeds
+  benchmarks/bench_v2_speeds.cpp
+)
+target_link_libraries(bench_v2_speeds PRIVATE eureka_lex aarchgate)
+
 # 7. Compile Adaptive Storage verification tests
 add_executable(test_adaptive_storage
   tests/test_adaptive_storage.cpp

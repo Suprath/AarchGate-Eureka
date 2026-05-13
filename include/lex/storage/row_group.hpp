@@ -50,6 +50,35 @@ public:
         hot_data_planes.assign(hot_cols * 64 * 8192, 0);
     }
 
+    RowGroup(RowGroup&& other) noexcept 
+        : fingerprint_hash(other.fingerprint_hash),
+          hot_column_count(other.hot_column_count),
+          warm_column_count(other.warm_column_count),
+          null_maps(std::move(other.null_maps)),
+          zone_maps(std::move(other.zone_maps)),
+          string_bloom(std::move(other.string_bloom)),
+          hot_data_planes(std::move(other.hot_data_planes)),
+          warm_dict_strings(std::move(other.warm_dict_strings)),
+          cold_sidecar_lz4_frames(std::move(other.cold_sidecar_lz4_frames)) {
+        ref_count.store(other.ref_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+
+    RowGroup& operator=(RowGroup&& other) noexcept {
+        if (this != &other) {
+            fingerprint_hash = other.fingerprint_hash;
+            hot_column_count = other.hot_column_count;
+            warm_column_count = other.warm_column_count;
+            null_maps = std::move(other.null_maps);
+            zone_maps = std::move(other.zone_maps);
+            string_bloom = std::move(other.string_bloom);
+            hot_data_planes = std::move(other.hot_data_planes);
+            warm_dict_strings = std::move(other.warm_dict_strings);
+            cold_sidecar_lz4_frames = std::move(other.cold_sidecar_lz4_frames);
+            ref_count.store(other.ref_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        }
+        return *this;
+    }
+
     void retain() {
         ref_count.fetch_add(1, std::memory_order_relaxed);
     }
