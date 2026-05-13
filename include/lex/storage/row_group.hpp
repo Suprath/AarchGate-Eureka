@@ -42,6 +42,10 @@ public:
     std::vector<std::string> warm_dict_strings;
     std::vector<uint8_t> cold_sidecar_lz4_frames;
 
+    // Ephemeral Ingestion Ring Buffer staging area
+    std::vector<std::string> raw_chunk_buffer;
+    std::atomic<bool> is_compacted{false};
+
     RowGroup(uint32_t hot_cols, uint32_t warm_cols) 
         : hot_column_count(hot_cols), warm_column_count(warm_cols), string_bloom(8192) {
         size_t total_cols = hot_cols + warm_cols;
@@ -59,8 +63,10 @@ public:
           string_bloom(std::move(other.string_bloom)),
           hot_data_planes(std::move(other.hot_data_planes)),
           warm_dict_strings(std::move(other.warm_dict_strings)),
-          cold_sidecar_lz4_frames(std::move(other.cold_sidecar_lz4_frames)) {
+          cold_sidecar_lz4_frames(std::move(other.cold_sidecar_lz4_frames)),
+          raw_chunk_buffer(std::move(other.raw_chunk_buffer)) {
         ref_count.store(other.ref_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        is_compacted.store(other.is_compacted.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
 
     RowGroup& operator=(RowGroup&& other) noexcept {
@@ -74,7 +80,9 @@ public:
             hot_data_planes = std::move(other.hot_data_planes);
             warm_dict_strings = std::move(other.warm_dict_strings);
             cold_sidecar_lz4_frames = std::move(other.cold_sidecar_lz4_frames);
+            raw_chunk_buffer = std::move(other.raw_chunk_buffer);
             ref_count.store(other.ref_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            is_compacted.store(other.is_compacted.load(std::memory_order_relaxed), std::memory_order_relaxed);
         }
         return *this;
     }

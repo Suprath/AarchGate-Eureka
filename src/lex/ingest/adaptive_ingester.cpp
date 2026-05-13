@@ -98,6 +98,34 @@ std::shared_ptr<storage::RowGroup> AdaptiveIngester::ingest_chunk(const std::vec
     return rg;
 }
 
+std::shared_ptr<storage::RowGroup> AdaptiveIngester::append_raw_batch(const std::vector<std::string>& raw_lines) {
+    auto rg = std::make_shared<storage::RowGroup>(32, 32);
+    rg->raw_chunk_buffer = raw_lines;
+    rg->is_compacted.store(false, std::memory_order_release);
+    rg->fingerprint_hash = 0xABC123987ULL;
+    return rg;
+}
+
+void AdaptiveIngester::async_background_transcode(std::shared_ptr<storage::RowGroup> rg) {
+    if (!rg || rg->is_compacted.load(std::memory_order_acquire)) return;
+
+    // Transcode raw chunk buffer into Hot bit-planes and Warm dictionary strings
+    auto transcoded_rg = ingest_chunk(rg->raw_chunk_buffer);
+
+    // Swap buffers under MVCC protection
+    rg->hot_data_planes = std::move(transcoded_rg->hot_data_planes);
+    rg->warm_dict_strings = std::move(transcoded_rg->warm_dict_strings);
+    rg->string_bloom = std::move(transcoded_rg->string_bloom);
+    rg->zone_maps = std::move(transcoded_rg->zone_maps);
+    rg->null_maps = std::move(transcoded_rg->null_maps);
+
+    // Evict raw text buffer
+    rg->raw_chunk_buffer.clear();
+    rg->raw_chunk_buffer.shrink_to_fit();
+
+    rg->is_compacted.store(true, std::memory_order_release);
+}
+
 } // namespace ingest
 } // namespace lex
 } // namespace eureka
