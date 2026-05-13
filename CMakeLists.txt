@@ -20,6 +20,10 @@ add_library(eureka_lex STATIC
   src/lex/ingester.cpp
   src/lex/dispatcher.cpp
   src/lex/exporter.cpp
+  src/lex/ingest/adaptive_ingester.cpp
+  src/lex/ingest/promotion_daemon.cpp
+  src/lex/jit/query_planner.cpp
+  src/lex/jit/plan_cache.cpp
   external/simdjson/simdjson.cpp
 )
 target_link_libraries(eureka_lex PRIVATE aarchgate)
@@ -41,6 +45,17 @@ add_executable(bench_reconstruct
   benchmarks/bench_reconstruct.cpp
 )
 target_link_libraries(bench_reconstruct PRIVATE eureka_lex aarchgate)
+
+# 7. Compile Adaptive Storage verification tests
+add_executable(test_adaptive_storage
+  tests/test_adaptive_storage.cpp
+)
+target_link_libraries(test_adaptive_storage PRIVATE eureka_lex aarchgate)
+
+add_executable(test_pruned_jit
+  tests/test_pruned_jit.cpp
+)
+target_link_libraries(test_pruned_jit PRIVATE eureka_lex aarchgate)
 
 # Enable custom release optimizations
 if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
