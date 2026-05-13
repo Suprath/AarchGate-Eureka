@@ -72,6 +72,11 @@ add_executable(test_pruned_jit
 )
 target_link_libraries(test_pruned_jit PRIVATE eureka_lex aarchgate)
 
+add_executable(test_production_fuzzer
+  tests/test_production_fuzzer.cpp
+)
+target_link_libraries(test_production_fuzzer PRIVATE eureka_lex aarchgate)
+
 # Enable custom release optimizations
 if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
   target_compile_options(eureka_lex PRIVATE -O3 -ffast-math)

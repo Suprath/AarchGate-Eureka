@@ -1,6 +1,8 @@
 #include <lex/ingest/adaptive_ingester.hpp>
 #include <sstream>
 
+#include <fstream>
+
 namespace eureka {
 namespace lex {
 namespace ingest {
@@ -99,6 +101,7 @@ std::shared_ptr<storage::RowGroup> AdaptiveIngester::ingest_chunk(const std::vec
 }
 
 std::shared_ptr<storage::RowGroup> AdaptiveIngester::append_raw_batch(const std::vector<std::string>& raw_lines) {
+    append_wal_entry(raw_lines); // 1. Persist sequentially to WAL before producer acknowledgment
     auto rg = std::make_shared<storage::RowGroup>(32, 32);
     rg->raw_chunk_buffer = raw_lines;
     rg->is_compacted.store(false, std::memory_order_release);
@@ -132,7 +135,38 @@ size_t AdaptiveIngester::transcode_batch_now(std::shared_ptr<storage::RowGroup> 
 
     rg->is_compacted.store(true, std::memory_order_release);
     active_buffer_depth.fetch_sub(lines_drained, std::memory_order_relaxed);
+
+    // Truncate WAL segment upon successful RowGroup commit
+    truncate_wal();
     return lines_drained;
+}
+
+bool AdaptiveIngester::append_wal_entry(const std::vector<std::string>& batch) {
+    std::ofstream wal(current_wal_file, std::ios::app | std::ios::binary);
+    if (!wal) return false;
+    for (const auto& line : batch) {
+        wal << line << "\n";
+    }
+    wal.flush();
+    return true;
+}
+
+void AdaptiveIngester::truncate_wal() {
+    std::ofstream wal(current_wal_file, std::ios::trunc | std::ios::binary);
+}
+
+std::vector<std::string> AdaptiveIngester::recover_from_wal() {
+    std::vector<std::string> recovered;
+    std::ifstream wal(current_wal_file, std::ios::binary);
+    if (!wal) return recovered;
+    std::string line;
+    while (std::getline(wal, line)) {
+        if (!line.empty()) {
+            if (line.back() == '\r') line.pop_back();
+            recovered.push_back(std::move(line));
+        }
+    }
+    return recovered;
 }
 
 } // namespace ingest

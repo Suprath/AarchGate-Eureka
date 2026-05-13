@@ -31,6 +31,12 @@ public:
     std::atomic<size_t> active_buffer_depth{0};
     size_t transcode_batch_now(std::shared_ptr<storage::RowGroup> rg);
 
+    // Production Durability WAL Layer
+    std::string current_wal_file{"staging_commit.wal"};
+    bool append_wal_entry(const std::vector<std::string>& batch);
+    void truncate_wal();
+    std::vector<std::string> recover_from_wal();
+
     uint8_t get_slot_for_field(const std::string& field_name) const {
         auto it = field_to_slot_map.find(field_name);
         if (it != field_to_slot_map.end()) {
