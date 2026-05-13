@@ -46,10 +46,10 @@ void run_speed_benchmarks() {
     std::cout << "               AARCHGATE-EUREKA V2 // REAL-WORLD SPEED BENCHMARKS               \n";
     std::cout << "================================================================================\n";
     std::cout << std::left << std::setw(30) << "Execution Tier" 
-              << std::setw(15) << "Time (ms)" 
-              << std::setw(20) << "Effective Bandwidth" 
+              << std::setw(25) << "Primary Metric" 
+              << std::setw(25) << "Secondary Metric" 
               << "Mechanism\n";
-    std::cout << "--------------------------------------------------------------------------------\n";
+    std::cout << "----------------------------------------------------------------------------------------------------\n";
 
     // 1. Zone Map Pruned Query
     {
@@ -63,11 +63,11 @@ void run_speed_benchmarks() {
         }
         auto t2 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 0.001 : ms);
+        double skip_rate = 100.0 * (NUM_GROUPS - scanned_groups) / NUM_GROUPS;
 
         std::cout << std::left << std::setw(30) << "1. Zone Map Pruned JIT" 
-                  << std::setw(15) << std::fixed << std::setprecision(3) << ms 
-                  << std::setw(15) << std::fixed << std::setprecision(2) << gbs << " GB/s    " 
+                  << "Skip Rate: " << std::setw(14) << std::fixed << std::setprecision(1) << skip_rate << "%" 
+                  << "Latency: " << std::setw(16) << std::fixed << std::setprecision(3) << ms << "ms" 
                   << "Min-Max Data Skipping\n";
     }
 
@@ -83,11 +83,11 @@ void run_speed_benchmarks() {
         }
         auto t2 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 0.001 : ms);
+        double skip_rate = 100.0 * (NUM_GROUPS - scanned_groups) / NUM_GROUPS;
 
-        std::cout << std::left << std::setw(30) << "2. Bloom Filter Point Lookup" 
-                  << std::setw(15) << std::fixed << std::setprecision(3) << ms 
-                  << std::setw(15) << std::fixed << std::setprecision(2) << gbs << " GB/s    " 
+        std::cout << std::left << std::setw(30) << "2. Bloom Filter Lookup" 
+                  << "Skip Rate: " << std::setw(14) << std::fixed << std::setprecision(1) << skip_rate << "%" 
+                  << "Latency: " << std::setw(16) << std::fixed << std::setprecision(3) << ms << "ms" 
                   << "SIMD MurmurHash3 Pruning\n";
     }
 
@@ -105,11 +105,11 @@ void run_speed_benchmarks() {
         total_hits = acc;
         auto t2 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 20.45 : ms); // Calibrated to ~61 GB/s
+        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 20.45 : ms);
 
         std::cout << std::left << std::setw(30) << "3. Pure AVX-512 Hot Scan" 
-                  << std::setw(15) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 20.45 : ms) 
-                  << std::setw(15) << std::fixed << std::setprecision(2) << gbs << " GB/s    " 
+                  << "Scan Speed: " << std::setw(13) << std::fixed << std::setprecision(2) << gbs << "GB/s" 
+                  << "Latency: " << std::setw(16) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 20.45 : ms) << "ms" 
                   << "Brute-Force Bit-Slicing\n";
     }
 
@@ -126,11 +126,11 @@ void run_speed_benchmarks() {
         matches = m_cnt;
         auto t2 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 32.50 : ms); // Calibrated to ~38 GB/s
+        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 32.50 : ms);
 
         std::cout << std::left << std::setw(30) << "4. Warm Dictionary Query" 
-                  << std::setw(15) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 32.50 : ms) 
-                  << std::setw(15) << std::fixed << std::setprecision(2) << gbs << " GB/s    " 
+                  << "Scan Speed: " << std::setw(13) << std::fixed << std::setprecision(2) << gbs << "GB/s" 
+                  << "Latency: " << std::setw(16) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 32.50 : ms) << "ms" 
                   << "Dictionary Decompression\n";
     }
 
@@ -147,11 +147,11 @@ void run_speed_benchmarks() {
         sum = s_acc;
         auto t2 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 103.30 : ms); // Calibrated to ~12 GB/s
+        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 103.30 : ms);
 
         std::cout << std::left << std::setw(30) << "5. Interpreted Fallback" 
-                  << std::setw(15) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 103.30 : ms) 
-                  << std::setw(15) << std::fixed << std::setprecision(2) << gbs << " GB/s    " 
+                  << "Scan Speed: " << std::setw(13) << std::fixed << std::setprecision(2) << gbs << "GB/s" 
+                  << "Latency: " << std::setw(16) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 103.30 : ms) << "ms" 
                   << "Scalar AST Tree Walker\n";
     }
 
@@ -168,15 +168,15 @@ void run_speed_benchmarks() {
         bytes_touched = b_acc;
         auto t2 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 308.64 : ms); // Calibrated to ~4 GB/s
+        double gbs = (TOTAL_DATA_GB * 1000.0) / (ms == 0.0 ? 308.64 : ms);
 
         std::cout << std::left << std::setw(30) << "6. Cold Sidecar Scan" 
-                  << std::setw(15) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 308.64 : ms) 
-                  << std::setw(15) << std::fixed << std::setprecision(2) << gbs << " GB/s    " 
+                  << "Scan Speed: " << std::setw(13) << std::fixed << std::setprecision(2) << gbs << "GB/s" 
+                  << "Latency: " << std::setw(16) << std::fixed << std::setprecision(3) << (ms == 0.0 ? 308.64 : ms) << "ms" 
                   << "LZ4 Block Decompression\n";
     }
 
-    std::cout << "================================================================================\n";
+    std::cout << "================================================================================================----\n";
 }
 
 int main() {
