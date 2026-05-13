@@ -103,11 +103,18 @@ std::shared_ptr<storage::RowGroup> AdaptiveIngester::append_raw_batch(const std:
     rg->raw_chunk_buffer = raw_lines;
     rg->is_compacted.store(false, std::memory_order_release);
     rg->fingerprint_hash = 0xABC123987ULL;
+    active_buffer_depth.fetch_add(raw_lines.size(), std::memory_order_relaxed);
     return rg;
 }
 
 void AdaptiveIngester::async_background_transcode(std::shared_ptr<storage::RowGroup> rg) {
-    if (!rg || rg->is_compacted.load(std::memory_order_acquire)) return;
+    transcode_batch_now(rg);
+}
+
+size_t AdaptiveIngester::transcode_batch_now(std::shared_ptr<storage::RowGroup> rg) {
+    if (!rg || rg->is_compacted.load(std::memory_order_acquire)) return 0;
+
+    size_t lines_drained = rg->raw_chunk_buffer.size();
 
     // Transcode raw chunk buffer into Hot bit-planes and Warm dictionary strings
     auto transcoded_rg = ingest_chunk(rg->raw_chunk_buffer);
@@ -124,6 +131,8 @@ void AdaptiveIngester::async_background_transcode(std::shared_ptr<storage::RowGr
     rg->raw_chunk_buffer.shrink_to_fit();
 
     rg->is_compacted.store(true, std::memory_order_release);
+    active_buffer_depth.fetch_sub(lines_drained, std::memory_order_relaxed);
+    return lines_drained;
 }
 
 } // namespace ingest
