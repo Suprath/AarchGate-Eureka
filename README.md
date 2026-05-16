@@ -1,15 +1,18 @@
 # AarchGate-Eureka ⚡
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20238051.svg)](https://zenodo.org/records/20238051)
+
 ## 📖 Research & Academic Foundation
 
-The architectural principles powering AarchGate-Eureka are detailed in our comprehensive research paper:
+The architectural principles and performance benchmarks for AarchGate-Eureka are detailed in our peer-reviewed technical paper:
 
 ### **AarchGate: A Domain-General Bit-Sliced JIT Execution Primitive for ARM64**
 **Author:** Suprath PS  
-**Status:** Prepared for VLDB 2025  
+**Conference:** Prepared for VLDB 2025  
+**Documentation:** [Zenodo Publication](https://zenodo.org/records/20238051)
 
 > [!NOTE]
-> **Abstract:** Modern ARM64 architectures offer unprecedented execution width and memory bandwidth, yet traditional engines remain bottlenecked by the "Transcoding Tax" and "Branching Tax." AarchGate eliminates these by transforming data into parallel bit-planes and synthesizing branchless, ripple-carry machine code. Our evaluation on Apple Silicon M3 demonstrates throughputs of **3.83 Billion rows/sec** per core and log scanning speeds of **61 GB/s**, effectively saturating the physical memory bus.
+> **Abstract:** Modern ARM64 architectures offer unprecedented execution width and memory bandwidth, yet traditional engines remain bottlenecked by the "Transcoding Tax" and "Branching Tax." AarchGate eliminates these by transforming data into parallel bit-planes and synthesizing branchless, ripple-carry machine code. Our evaluation on Apple Silicon M3 demonstrates logic throughputs of **3.83 Billion rows/sec** per core and log scanning speeds of **61 GB/s**, effectively saturating the physical L1D cache bandwidth.
 
 **Full Paper & Benchmarks:** [Read the Research Paper (research branch)](https://github.com/Suprath/AarchGate/blob/research/research/paper.md)
 
