@@ -175,6 +175,23 @@ Evaluating `status == 500 AND latency > 100 AND severity == 3` on 4 performance 
 
 ---
 
+---
+
+## 📖 Research & Academic Foundation
+
+The architectural principles powering AarchGate-Eureka are detailed in our comprehensive research paper:
+
+### **AarchGate: A Domain-General Bit-Sliced JIT Execution Primitive for ARM64**
+**Author:** Suprath PS  
+**Status:** Prepared for VLDB 2025  
+
+> [!NOTE]
+> **Abstract:** Modern ARM64 architectures offer unprecedented execution width and memory bandwidth, yet traditional engines remain bottlenecked by the "Transcoding Tax" and "Branching Tax." AarchGate eliminates these by transforming data into parallel bit-planes and synthesizing branchless, ripple-carry machine code. Our evaluation on Apple Silicon M3 demonstrates throughputs of **3.83 Billion rows/sec** per core and log scanning speeds of **61 GB/s**, effectively saturating the physical memory bus.
+
+**Full Paper & Benchmarks:** [View Research Repository](external/AarchGate-ML/external/AarchGate/research/)
+
+---
+
 ## 🔍 Memory Diagnostics Tip
 
 > [!TIP]
