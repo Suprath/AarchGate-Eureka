@@ -61,6 +61,11 @@ add_executable(bench_expert_review
 )
 target_link_libraries(bench_expert_review PRIVATE eureka_lex aarchgate)
 
+add_executable(bench_query_scaling
+  benchmarks/bench_query_scaling.cpp
+)
+target_link_libraries(bench_query_scaling PRIVATE eureka_lex aarchgate)
+
 # 7. Compile Adaptive Storage verification tests
 add_executable(test_adaptive_storage
   tests/test_adaptive_storage.cpp
