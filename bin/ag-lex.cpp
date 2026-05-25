@@ -15,7 +15,7 @@
 using namespace eureka::lex;
 
 // Ultra-fast vectorized scalar substring counting over mapped files (Grep-Killer)
-static uint64_t run_scalar_string_search(const std::string& filepath, const std::string& pattern) noexcept {
+static uint64_t run_scalar_string_search(const std::string& filepath, const std::string& pattern, bool pin_memory) noexcept {
     int fd = ::open(filepath.c_str(), O_RDONLY);
     if (fd < 0) return 0;
 
@@ -33,12 +33,21 @@ static uint64_t run_scalar_string_search(const std::string& filepath, const std:
     }
     ::madvise(mapped, size, MADV_SEQUENTIAL);
 
+    if (pin_memory) {
+        if (::mlock(mapped, size) != 0) {
+            std::cerr << "[Warning] Failed to pin index pages in RAM: " << std::strerror(errno) << std::endl;
+        } else {
+            std::cout << "[+] Successfully pinned " << size << " bytes of index pages in RAM." << std::endl;
+        }
+    }
+
     const char* start = static_cast<const char*>(mapped);
     const char* end = start + size;
     uint64_t occurrences = 0;
 
     size_t pat_len = pattern.length();
     if (pat_len == 0) {
+        if (pin_memory) ::munlock(mapped, size);
         ::munmap(mapped, size);
         ::close(fd);
         return 0;
@@ -62,6 +71,7 @@ static uint64_t run_scalar_string_search(const std::string& filepath, const std:
         }
     }
 
+    if (pin_memory) ::munlock(mapped, size);
     ::munmap(mapped, size);
     ::close(fd);
     return occurrences;
@@ -74,15 +84,25 @@ int main(int argc, char* argv[]) {
     std::cout << "\033[1;36m       AARCHGATE-LEX // FAST SILICON LOG QUERY TOOL     \033[0m" << std::endl;
     std::cout << "\033[1;36m========================================================\033[0m" << std::endl;
 
-    if (argc >= 4 && std::strcmp(argv[1], "--convert") == 0) {
-        std::string input_json = argv[2];
-        std::string output_agb = argv[3];
+    bool pin_memory = false;
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--pin-memory") == 0) {
+            pin_memory = true;
+        } else {
+            args.push_back(argv[i]);
+        }
+    }
+
+    if (args.size() >= 3 && args[0] == "--convert") {
+        std::string input_json = args[1];
+        std::string output_agb = args[2];
         bool success = convert_json_to_agb(input_json, output_agb);
         return success ? 0 : 1;
     }
 
-    if (argc >= 3 && std::strcmp(argv[1], "--stream-ingest") == 0) {
-        std::string output_agb = argv[2];
+    if (args.size() >= 2 && args[0] == "--stream-ingest") {
+        std::string output_agb = args[1];
         std::cout << "[+] Tailing live stdin log stream into AarchGate-Eureka v2 engine..." << std::endl;
         std::cout << "[+] Target DB: " << output_agb << std::endl;
         
@@ -109,8 +129,8 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <query_string> <log_file_path>" << std::endl;
+    if (args.size() < 2) {
+        std::cerr << "Usage: " << argv[0] << " [--pin-memory] <query_string> <log_file_path>" << std::endl;
         std::cerr << "       " << argv[0] << " --convert <input_json_path> <output_agb_path>" << std::endl;
         std::cerr << "       " << argv[0] << " --stream-ingest <output_agb_path>" << std::endl;
         std::cerr << "Example (Logical): " << argv[0] << " \"status == 200 AND latency > 150\" web_logs.json" << std::endl;
@@ -119,8 +139,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::string query_str = argv[1];
-    std::string filepath = argv[2];
+    std::string query_str = args[0];
+    std::string filepath = args[1];
 
     std::cout << "[+] Loading File: " << filepath << std::endl;
     std::cout << "[+] Compiling & Analyzing Query: \"" << query_str << "\"" << std::endl;
@@ -134,7 +154,7 @@ int main(int argc, char* argv[]) {
 
     if (query.type == QueryType::SCALAR_STRING_SEARCH) {
         std::cout << "[+] Dispatching Profile: [SCALAR TEXT PATTERN VECTOR ENGINE]" << std::endl;
-        total_matches = run_scalar_string_search(filepath, query.string_pattern);
+        total_matches = run_scalar_string_search(filepath, query.string_pattern, pin_memory);
         
         // Get file size
         struct stat sb;
@@ -147,6 +167,7 @@ int main(int argc, char* argv[]) {
         std::cout << "    [+] Sub-Condition 2: [latency > " << query.latency_target << "]" << std::endl;
 
         Ingester ingester;
+        ingester.set_pin_memory(pin_memory);
         if (!ingester.open_file(filepath)) {
             std::cerr << "[-] Error: Failed to memory map file: " << filepath << std::endl;
             return 1;

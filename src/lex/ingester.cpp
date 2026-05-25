@@ -140,6 +140,14 @@ uint64_t Ingester::run_query(uint64_t status_target, uint64_t latency_target) no
     }
     file_size_ = map.view().size();
 
+    if (pin_memory_) {
+        if (::mlock(map.view().data(), file_size_) != 0) {
+            std::cerr << "[Warning] Failed to pin index pages in RAM: " << std::strerror(errno) << std::endl;
+        } else {
+            std::cout << "[+] Successfully pinned " << file_size_ << " bytes of index pages in RAM." << std::endl;
+        }
+    }
+
     // Stream parse using simdjson on Thread 0 / Core 0
     simdjson::ondemand::parser parser;
     std::thread consumer_thread;

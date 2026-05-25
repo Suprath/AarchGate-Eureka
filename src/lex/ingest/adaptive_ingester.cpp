@@ -1,99 +1,119 @@
 #include <lex/ingest/adaptive_ingester.hpp>
 #include <sstream>
-
 #include <fstream>
+#include <cstring>
+#include <cctype>
+#include <mutex>
+#include <shared_mutex>
+#include "simdjson.h"
 
 namespace eureka {
 namespace lex {
 namespace ingest {
 
 std::shared_ptr<storage::RowGroup> AdaptiveIngester::ingest_chunk(const std::vector<std::string>& json_lines) {
-    // For standalone testing and robust cross-platform building, we implement a lightweight parser
     auto rg = std::make_shared<storage::RowGroup>(32, 32);
 
-    size_t row_idx = 0;
-    for (const auto& line : json_lines) {
-        if (row_idx >= 65536) break;
-        uint32_t block_idx = row_idx / 64;
+    uint8_t status_slot = 0;
+    uint8_t latency_slot = 1;
+    uint8_t trace_slot = 32;
 
-        // Mock field parsing: status, latency, trace_id
-        if (line.find("\"status\":") != std::string::npos) {
-            std::string field = "status";
-            if (field_to_slot_map.find(field) == field_to_slot_map.end()) {
-                field_to_slot_map[field] = next_hot_slot++;
-            }
-            uint8_t slot = field_to_slot_map[field];
-            rg->set_block_presence(slot, block_idx);
-
-            // Extract status value
-            size_t pos = line.find("\"status\":");
-            uint64_t status_val = 0;
-            size_t num_pos = pos + 9;
-            while (num_pos < line.size() && std::isdigit(line[num_pos])) {
-                status_val = status_val * 10 + (line[num_pos] - '0');
-                num_pos++;
-            }
-            rg->zone_maps[slot].update_u64(status_val);
-
-            // Write to hot bit-planes
-            size_t plane_base = slot * 64 * 8192;
-            for (int bit = 0; bit < 64; ++bit) {
-                if ((status_val >> bit) & 1ULL) {
-                    size_t byte_idx = row_idx / 8;
-                    size_t bit_pos = row_idx & 7;
-                    rg->hot_data_planes[plane_base + bit * 8192 + byte_idx] |= (1 << bit_pos);
-                }
-            }
+    {
+        std::lock_guard<std::mutex> lock(schema_mutex);
+        if (field_to_slot_map.find("status") == field_to_slot_map.end()) {
+            field_to_slot_map["status"] = next_hot_slot++;
         }
+        status_slot = field_to_slot_map["status"];
 
-        if (line.find("\"latency\":") != std::string::npos) {
-            std::string field = "latency";
-            if (field_to_slot_map.find(field) == field_to_slot_map.end()) {
-                field_to_slot_map[field] = next_hot_slot++;
-            }
-            uint8_t slot = field_to_slot_map[field];
-            rg->set_block_presence(slot, block_idx);
-
-            size_t pos = line.find("\"latency\":");
-            uint64_t lat_val = 0;
-            size_t num_pos = pos + 10;
-            while (num_pos < line.size() && std::isdigit(line[num_pos])) {
-                lat_val = lat_val * 10 + (line[num_pos] - '0');
-                num_pos++;
-            }
-            rg->zone_maps[slot].update_u64(lat_val);
-
-            size_t plane_base = slot * 64 * 8192;
-            for (int bit = 0; bit < 64; ++bit) {
-                if ((lat_val >> bit) & 1ULL) {
-                    size_t byte_idx = row_idx / 8;
-                    size_t bit_pos = row_idx & 7;
-                    rg->hot_data_planes[plane_base + bit * 8192 + byte_idx] |= (1 << bit_pos);
-                }
-            }
+        if (field_to_slot_map.find("latency") == field_to_slot_map.end()) {
+            field_to_slot_map["latency"] = next_hot_slot++;
         }
+        latency_slot = field_to_slot_map["latency"];
 
-        if (line.find("\"trace_id\":") != std::string::npos) {
-            std::string field = "trace_id";
-            if (field_to_slot_map.find(field) == field_to_slot_map.end()) {
-                field_to_slot_map[field] = 32 + next_warm_slot++;
-            }
-            uint8_t slot = field_to_slot_map[field];
-            rg->set_block_presence(slot, block_idx);
+        if (field_to_slot_map.find("trace_id") == field_to_slot_map.end()) {
+            field_to_slot_map["trace_id"] = 32 + next_warm_slot++;
+        }
+        trace_slot = field_to_slot_map["trace_id"];
+    }
 
-            size_t pos = line.find("\"trace_id\":\"");
-            if (pos != std::string::npos) {
-                size_t start_pos = pos + 12;
-                size_t end_pos = line.find("\"", start_pos);
-                if (end_pos != std::string::npos) {
-                    std::string trace_str = line.substr(start_pos, end_pos - start_pos);
+    size_t total_lines = json_lines.size();
+    size_t num_blocks = (total_lines + 63) / 64;
+    if (num_blocks > 1024) num_blocks = 1024; // row group size limit (65536 lines)
+
+    apex::compute::BitSlicer slicer;
+    simdjson::ondemand::parser parser;
+
+    for (size_t block_idx = 0; block_idx < num_blocks; ++block_idx) {
+        alignas(64) uint64_t status_buf[64] = {0};
+        alignas(64) uint64_t latency_buf[64] = {0};
+
+        rg->set_block_presence(status_slot, block_idx);
+        rg->set_block_presence(latency_slot, block_idx);
+        rg->set_block_presence(trace_slot, block_idx);
+
+        for (int i = 0; i < 64; ++i) {
+            size_t row_idx = block_idx * 64 + i;
+            if (row_idx >= total_lines) break;
+
+            const auto& line = json_lines[row_idx];
+
+            try {
+                simdjson::padded_string padded(line);
+                auto doc = parser.iterate(padded);
+
+                // 1. Status parsing via simdjson
+                uint64_t status_val = 0;
+                auto status_res = doc["status"].get_uint64();
+                if (!status_res.error()) {
+                    status_val = status_res.value();
+                }
+                status_buf[i] = status_val;
+                rg->zone_maps[status_slot].update_u64(status_val);
+
+                // 2. Latency parsing via simdjson
+                uint64_t lat_val = 0;
+                auto latency_res = doc["latency"].get_uint64();
+                if (latency_res.error()) {
+                    latency_res = doc["latency_ms"].get_uint64();
+                }
+                if (!latency_res.error()) {
+                    lat_val = latency_res.value();
+                }
+                latency_buf[i] = lat_val;
+                rg->zone_maps[latency_slot].update_u64(lat_val);
+
+                // 3. Trace ID / Service parsing via simdjson
+                auto trace_res = doc["trace_id"].get_string();
+                if (trace_res.error()) {
+                    trace_res = doc["service"].get_string();
+                }
+                if (!trace_res.error()) {
+                    std::string_view trace_str = trace_res.value();
                     rg->string_bloom.add(trace_str);
-                    rg->warm_dict_strings.push_back(trace_str);
+                    rg->warm_dict_strings.push_back(std::string(trace_str));
                 }
+            } catch (const std::exception& e) {
+                // Ignore exceptions on malformed lines
             }
         }
 
-        row_idx++;
+        // Vectorized slice and direct block write
+        alignas(64) uint64_t status_planes[64];
+        alignas(64) uint64_t latency_planes[64];
+
+        slicer.slice_n(status_buf, 64, status_planes, 64);
+        slicer.slice_n(latency_buf, 64, latency_planes, 64);
+
+        size_t status_plane_base = status_slot * 64 * 8192;
+        size_t latency_plane_base = latency_slot * 64 * 8192;
+
+        uint64_t* status_dest = reinterpret_cast<uint64_t*>(&rg->hot_data_planes[status_plane_base]);
+        uint64_t* latency_dest = reinterpret_cast<uint64_t*>(&rg->hot_data_planes[latency_plane_base]);
+
+        for (int bit = 0; bit < 64; ++bit) {
+            status_dest[bit * 1024 + block_idx] = status_planes[bit];
+            latency_dest[bit * 1024 + block_idx] = latency_planes[bit];
+        }
     }
 
     rg->fingerprint_hash = 0xABC123987ULL;
@@ -110,30 +130,24 @@ std::shared_ptr<storage::RowGroup> AdaptiveIngester::append_raw_batch(const std:
     return rg;
 }
 
-void AdaptiveIngester::async_background_transcode(std::shared_ptr<storage::RowGroup> rg) {
+void AdaptiveIngester::async_background_transcode(std::shared_ptr<storage::RowGroup>& rg) {
     transcode_batch_now(rg);
 }
 
-size_t AdaptiveIngester::transcode_batch_now(std::shared_ptr<storage::RowGroup> rg) {
-    if (!rg || rg->is_compacted.load(std::memory_order_acquire)) return 0;
+size_t AdaptiveIngester::transcode_batch_now(std::shared_ptr<storage::RowGroup>& rg) {
+    auto old_rg = std::atomic_load(&rg);
+    if (!old_rg || old_rg->is_compacted.load(std::memory_order_acquire)) return 0;
 
-    size_t lines_drained = rg->raw_chunk_buffer.size();
+    size_t lines_drained = old_rg->raw_chunk_buffer.size();
 
     // Transcode raw chunk buffer into Hot bit-planes and Warm dictionary strings
-    auto transcoded_rg = ingest_chunk(rg->raw_chunk_buffer);
+    auto transcoded_rg = ingest_chunk(old_rg->raw_chunk_buffer);
 
-    // Swap buffers under MVCC protection
-    rg->hot_data_planes = std::move(transcoded_rg->hot_data_planes);
-    rg->warm_dict_strings = std::move(transcoded_rg->warm_dict_strings);
-    rg->string_bloom = std::move(transcoded_rg->string_bloom);
-    rg->zone_maps = std::move(transcoded_rg->zone_maps);
-    rg->null_maps = std::move(transcoded_rg->null_maps);
+    transcoded_rg->is_compacted.store(true, std::memory_order_release);
 
-    // Evict raw text buffer
-    rg->raw_chunk_buffer.clear();
-    rg->raw_chunk_buffer.shrink_to_fit();
+    // Swap buffers atomically under MVCC pointer rules (RCU-style)
+    std::atomic_store(&rg, transcoded_rg);
 
-    rg->is_compacted.store(true, std::memory_order_release);
     active_buffer_depth.fetch_sub(lines_drained, std::memory_order_relaxed);
 
     // Truncate WAL segment upon successful RowGroup commit
@@ -142,20 +156,25 @@ size_t AdaptiveIngester::transcode_batch_now(std::shared_ptr<storage::RowGroup> 
 }
 
 bool AdaptiveIngester::append_wal_entry(const std::vector<std::string>& batch) {
+    std::lock_guard<std::mutex> lock(wal_mutex);
     std::ofstream wal(current_wal_file, std::ios::app | std::ios::binary);
     if (!wal) return false;
+    std::stringstream ss;
     for (const auto& line : batch) {
-        wal << line << "\n";
+        ss << line << "\n";
     }
+    wal << ss.rdbuf();
     wal.flush();
     return true;
 }
 
 void AdaptiveIngester::truncate_wal() {
+    std::lock_guard<std::mutex> lock(wal_mutex);
     std::ofstream wal(current_wal_file, std::ios::trunc | std::ios::binary);
 }
 
 std::vector<std::string> AdaptiveIngester::recover_from_wal() {
+    std::lock_guard<std::mutex> lock(wal_mutex);
     std::vector<std::string> recovered;
     std::ifstream wal(current_wal_file, std::ios::binary);
     if (!wal) return recovered;

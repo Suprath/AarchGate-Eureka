@@ -4,7 +4,10 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
 #include "../storage/row_group.hpp"
+#include "apex/compute/bit_slicer.hpp"
 
 namespace eureka {
 namespace lex {
@@ -15,6 +18,8 @@ private:
     std::unordered_map<std::string, uint8_t> field_to_slot_map;
     uint8_t next_hot_slot{0};
     uint8_t next_warm_slot{0};
+    std::mutex schema_mutex;
+    std::mutex wal_mutex;
 
 public:
     AdaptiveIngester() = default;
@@ -25,11 +30,11 @@ public:
 
     // Zero-Copy Deferred Transcoding Fast-Path
     std::shared_ptr<storage::RowGroup> append_raw_batch(const std::vector<std::string>& raw_lines);
-    void async_background_transcode(std::shared_ptr<storage::RowGroup> rg);
+    void async_background_transcode(std::shared_ptr<storage::RowGroup>& rg);
 
     // Expert Review Pipeline Instrumentation
     std::atomic<size_t> active_buffer_depth{0};
-    size_t transcode_batch_now(std::shared_ptr<storage::RowGroup> rg);
+    size_t transcode_batch_now(std::shared_ptr<storage::RowGroup>& rg);
 
     // Production Durability WAL Layer
     std::string current_wal_file{"staging_commit.wal"};
@@ -37,7 +42,8 @@ public:
     void truncate_wal();
     std::vector<std::string> recover_from_wal();
 
-    uint8_t get_slot_for_field(const std::string& field_name) const {
+    uint8_t get_slot_for_field(const std::string& field_name) {
+        std::lock_guard<std::mutex> lock(schema_mutex);
         auto it = field_to_slot_map.find(field_name);
         if (it != field_to_slot_map.end()) {
             return it->second;

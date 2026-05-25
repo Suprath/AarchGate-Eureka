@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <atomic>
+#include <shared_mutex>
 #include "zone_map.hpp"
 #include "bloom_filter.hpp"
 
@@ -24,6 +25,7 @@ private:
     std::atomic<int32_t> ref_count{0};
 
 public:
+    mutable std::shared_mutex rw_mutex;
     uint64_t fingerprint_hash{0};
     uint32_t hot_column_count{0};
     uint32_t warm_column_count{0};
@@ -52,6 +54,21 @@ public:
         null_maps.assign(total_cols, std::vector<uint64_t>(16, 0));
         zone_maps.assign(total_cols, ZoneMap(DataType::UINT64));
         hot_data_planes.assign(hot_cols * 64 * 8192, 0);
+    }
+
+    RowGroup(const RowGroup& other)
+        : fingerprint_hash(other.fingerprint_hash),
+          hot_column_count(other.hot_column_count),
+          warm_column_count(other.warm_column_count),
+          null_maps(other.null_maps),
+          zone_maps(other.zone_maps),
+          string_bloom(other.string_bloom),
+          hot_data_planes(other.hot_data_planes),
+          warm_dict_strings(other.warm_dict_strings),
+          cold_sidecar_lz4_frames(other.cold_sidecar_lz4_frames),
+          raw_chunk_buffer(other.raw_chunk_buffer) {
+        ref_count.store(other.ref_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        is_compacted.store(other.is_compacted.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
 
     RowGroup(RowGroup&& other) noexcept 

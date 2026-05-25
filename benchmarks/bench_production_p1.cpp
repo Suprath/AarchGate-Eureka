@@ -6,6 +6,7 @@
 #include <thread>
 #include <future>
 #include <numeric>
+#include <shared_mutex>
 #include <lex/ingest/adaptive_ingester.hpp>
 #include <lex/jit/query_planner.hpp>
 
@@ -80,7 +81,8 @@ void run_p1_production_suite() {
             auto q_t1 = std::chrono::high_resolution_clock::now();
             size_t matching = 0;
             for (auto& rg : row_groups) {
-                if (planner.evaluate_pruning(*rg, pred)) matching++;
+                auto local_rg = std::atomic_load(&rg);
+                if (local_rg && planner.evaluate_pruning(*local_rg, pred)) matching++;
             }
             auto q_t2 = std::chrono::high_resolution_clock::now();
             double lat = std::chrono::duration<double, std::milli>(q_t2 - q_t1).count();

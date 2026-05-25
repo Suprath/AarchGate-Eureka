@@ -39,7 +39,10 @@ public:
     // Retrieve file statistics
     size_t get_file_size() const noexcept { return file_size_; }
 
+    void set_pin_memory(bool pin) noexcept { pin_memory_ = pin; }
+
 private:
+    bool pin_memory_ = false;
     // Background thread runner that executes the JIT compiled evaluation kernels
     void processing_worker_loop() noexcept;
 

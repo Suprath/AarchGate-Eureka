@@ -6,6 +6,7 @@
 #include <thread>
 #include <future>
 #include <numeric>
+#include <shared_mutex>
 #include <lex/ingest/adaptive_ingester.hpp>
 #include <lex/jit/query_planner.hpp>
 
@@ -49,7 +50,8 @@ void run_expert_review_suite() {
     auto consumer_worker = [&](int id) {
         while (producer_running.load(std::memory_order_relaxed)) {
             for (auto& rg : staging_groups) {
-                if (rg && !rg->is_compacted.load(std::memory_order_relaxed)) {
+                auto local_rg = std::atomic_load(&rg);
+                if (local_rg && !local_rg->is_compacted.load(std::memory_order_relaxed)) {
                     ingester.transcode_batch_now(rg);
                 }
             }
@@ -100,7 +102,8 @@ void run_expert_review_suite() {
     auto t1_q = std::chrono::high_resolution_clock::now();
     size_t hits = 0;
     for (auto& rg : staging_groups) {
-        if (planner.evaluate_pruning(*rg, pred_hot)) hits++;
+        auto local_rg = std::atomic_load(&rg);
+        if (local_rg && planner.evaluate_pruning(*local_rg, pred_hot)) hits++;
     }
     auto t2_q = std::chrono::high_resolution_clock::now();
     double ms_hot = std::chrono::duration<double, std::milli>(t2_q - t1_q).count();
