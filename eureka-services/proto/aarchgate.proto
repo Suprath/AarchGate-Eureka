@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package eureka.aarchgate;
+
+option java_multiple_files = true;
+option java_package = "com.eureka.aarchgate.grpc";
+option java_outer_classname = "AarchGateProto";
+
+service AarchGateService {
+  // Executes a JIT-compiled logical query over a memory-mapped log file
+  rpc ExecuteQuery (QueryRequest) returns (QueryResponse);
+
+  // Live streaming ingestion of NDJSON chunks directly into C++ RowGroups
+  rpc StreamIngest (stream IngestRequest) returns (IngestResponse);
+}
+
+message QueryRequest {
+  string query_string = 1;      // e.g. "status == 500 AND latency > 200"
+  string file_path = 2;         // Path to the local memory-mapped file
+  bool pin_memory = 3;          // Call mlock() on mapped memory pages
+}
+
+message QueryResponse {
+  uint64 total_matches = 1;     // Count of records matching the predicate
+  uint64 bytes_processed = 2;   // Size of log scanned
+  double execution_time_ms = 3; // Processing latency
+  double speed_gb_sec = 4;      // Scan speed in GB/sec
+  string error_message = 5;     // Empty if query succeeded
+}
+
+message IngestRequest {
+  string database_path = 1;     // Output path for AGB file
+  repeated string log_lines = 2; // NDJSON strings to transcode
+}
+
+message IngestResponse {
+  uint64 total_ingested = 1;    // Count of lines transcoded
+  bool success = 2;
+  string error_message = 3;
+}

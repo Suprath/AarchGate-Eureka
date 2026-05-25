@@ -52,3 +52,11 @@ Thumbs.db
 # Large Benchmark Datasets
 benchmark_logs.json
 *.agb
+
+# Gradle and JVM outputs
+.gradle/
+out/
+
+# Runtime Log and WAL files
+*.log
+*.wal

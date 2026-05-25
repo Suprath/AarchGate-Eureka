@@ -1,0 +1,61 @@
+plugins {
+    id 'org.springframework.boot' version '3.2.5'
+    id 'java'
+    id 'com.google.protobuf' version '0.9.4'
+}
+
+group = 'com.eureka'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = '21'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:3.2.5')
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    
+    // gRPC and Protobuf
+    implementation 'io.grpc:grpc-netty-shaded:1.62.2'
+    implementation 'io.grpc:grpc-protobuf:1.62.2'
+    implementation 'io.grpc:grpc-stub:1.62.2'
+    compileOnly 'org.glassfish:javax.annotation:10.0-b28'
+    
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.25.1"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.62.2"
+        }
+    }
+    generateProtoTasks {
+        all()*.plugins {
+            grpc {}
+        }
+    }
+}
+
+sourceSets {
+    main {
+        proto {
+            srcDir '../proto'
+        }
+        java {
+            srcDirs 'build/generated/source/proto/main/grpc'
+            srcDirs 'build/generated/source/proto/main/java'
+        }
+    }
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
