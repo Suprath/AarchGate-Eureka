@@ -60,3 +60,14 @@ out/
 # Runtime Log and WAL files
 *.log
 *.wal
+
+# Staging scratch cache directory
+scratch/
+eureka-services/query-service/scratch/
+
+# Node modules & frontend outputs
+node_modules/
+eureka-services/query-service/frontend/node_modules/
+eureka-services/query-service/frontend/dist/
+eureka-services/query-service/src/main/resources/static/
+

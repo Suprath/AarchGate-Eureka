@@ -174,4 +174,22 @@ public class ScratchStorageService {
             return 0L;
         }
     }
+
+    public List<Map<String, Object>> getCachedFiles() {
+        List<Map<String, Object>> list = new ArrayList<>();
+        if (scratchDirPath == null || !Files.exists(scratchDirPath)) return list;
+        try (var stream = Files.list(scratchDirPath)) {
+            stream.forEach(p -> {
+                try {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("fileName", p.getFileName().toString());
+                    map.put("absolutePath", p.toAbsolutePath().toString());
+                    map.put("sizeBytes", Files.size(p));
+                    map.put("lastModified", Files.getLastModifiedTime(p).toMillis());
+                    list.add(map);
+                } catch (IOException ignored) {}
+            });
+        } catch (IOException ignored) {}
+        return list;
+    }
 }
