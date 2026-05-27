@@ -23,12 +23,24 @@ interface CachedFile {
   lastModified: number;
 }
 
+interface LogEvent {
+  timestamp: number;
+  level: string;
+  status: number;
+  latency: number;
+  message: string;
+  trace_id: string;
+  host: string;
+  source: string;
+}
+
 interface QueryResult {
   totalMatches: number;
   bytesProcessed: number;
   executionTimeMs: number;
   speedGbSec: number;
   errorMessage: string;
+  events?: LogEvent[];
 }
 
 export default function App() {
@@ -38,6 +50,13 @@ export default function App() {
   const [pinMemory, setPinMemory] = useState(true)
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null)
   const [querying, setQuerying] = useState(false)
+  const [activeTab, setActiveTab] = useState<'events' | 'visualization' | 'config'>('events')
+
+  // Expanded events tracking
+  const [expandedEvents, setExpandedEvents] = useState<Record<number, boolean>>({})
+
+  // Field stats dialog tracking
+  const [selectedFieldInfo, setSelectedFieldInfo] = useState<{ name: string; values: Record<string, number>; total: number } | null>(null)
 
   // Pipeline Config state
   const [config, setConfig] = useState<PipelineConfig>({
@@ -154,6 +173,8 @@ export default function App() {
   const handleRunQuery = async () => {
     setQuerying(true)
     setQueryResult(null)
+    setExpandedEvents({})
+    setSelectedFieldInfo(null)
     
     const params = new URLSearchParams()
     params.append('query', queryText)
@@ -169,6 +190,9 @@ export default function App() {
       
       const data = await res.json()
       setQueryResult(data)
+      if (activeTab === 'config') {
+        setActiveTab('events')
+      }
     } catch (err) {
       setQueryResult({
         totalMatches: 0,
@@ -179,7 +203,7 @@ export default function App() {
       })
     } finally {
       setQuerying(false)
-      fetchCacheFiles() // Refresh files list to show newly mapped file
+      fetchCacheFiles()
     }
   }
 
@@ -191,275 +215,566 @@ export default function App() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  return (
-    <div className="app-container">
-      <header>
-        <div className="brand">
-          <span className="logo-badge">AG</span>
-          <h1>AarchGate-Eureka Log Console</h1>
+  const toggleEventExpand = (index: number) => {
+    setExpandedEvents(prev => ({
+      ...prev,
+      [index]: !prev[index]
+    }))
+  }
+
+  // Inject condition helper into search bar
+  const appendSearchCondition = (fieldName: string, value: any) => {
+    const formatVal = typeof value === 'string' ? `"${value}"` : value
+    const condition = `${fieldName} == ${formatVal}`
+    if (queryText.trim() === '') {
+      setQueryText(condition)
+    } else if (queryText.toLowerCase().includes(fieldName.toLowerCase())) {
+      // replace existing filter if present
+      const regex = new RegExp(`${fieldName}\\s*(==|=|!=|>|>=|<|<=)\\s*[^\\s]+`, 'i')
+      setQueryText(queryText.replace(regex, condition))
+    } else {
+      setQueryText(prev => `${prev} AND ${condition}`)
+    }
+  }
+
+  // Calculate stats for left-panel interesting fields based on returned events
+  const getFieldStats = (fieldName: keyof LogEvent) => {
+    const events = queryResult?.events || []
+    const counts: Record<string, number> = {}
+    events.forEach(e => {
+      const val = String(e[fieldName] ?? 'unknown')
+      counts[val] = (counts[val] || 0) + 1
+    })
+    return counts
+  }
+
+  const handleFieldClick = (fieldName: keyof LogEvent) => {
+    const stats = getFieldStats(fieldName)
+    setSelectedFieldInfo({
+      name: fieldName,
+      values: stats,
+      total: queryResult?.events?.length || 0
+    })
+  }
+
+  const formatTime = (epoch: any) => {
+    if (!epoch) return 'N/A';
+    try {
+      const date = new Date(epoch);
+      if (isNaN(date.getTime())) return 'N/A';
+      return date.toISOString().replace('T', ' ').substring(0, 19);
+    } catch (e) {
+      return 'N/A';
+    }
+  }
+
+  // Helper to color-highlight raw NDJSON strings
+  const renderHighlightEventJson = (log: LogEvent) => {
+    const levelStr = String(log.level || 'INFO');
+    const statusVal = log.status || 200;
+    const latencyVal = log.latency || 0;
+    const messageStr = log.message || '';
+    
+    return (
+      <span className="json-line">
+        {"{"}
+        {log.timestamp !== undefined && log.timestamp !== null && (
+          <><span className="json-key">"timestamp"</span>: <span className="json-num">{log.timestamp}</span>, </>
+        )}
+        <span className="json-key">"level"</span>: <span className={`json-val level-${levelStr.toLowerCase()}`}>"{levelStr}"</span>,{" "}
+        <span className="json-key">"status"</span>: <span className={`json-num status-${String(statusVal)[0]}`}>{statusVal}</span>,{" "}
+        <span className="json-key">"latency"</span>: <span className="json-num">{latencyVal}</span>,{" "}
+        <span className="json-key">"message"</span>: <span className="json-val">"{messageStr}"</span>
+        {log.trace_id !== undefined && log.trace_id !== null && (
+          <>, <span className="json-key">"trace_id"</span>: <span className="json-val">"{log.trace_id}"</span></>
+        )}
+        {log.host !== undefined && log.host !== null && (
+          <>, <span className="json-key">"host"</span>: <span className="json-val">"{log.host}"</span></>
+        )}
+        {log.source !== undefined && log.source !== null && (
+          <>, <span className="json-key">"source"</span>: <span className="json-val">"{log.source}"</span></>
+        )}
+        {"}"}
+      </span>
+    )
+  }
+
+  // Timeline / Histogram data points based on timestamp distribution
+  const renderHistogram = () => {
+    const events = (queryResult?.events || []).filter(e => e.timestamp !== undefined && e.timestamp !== null);
+    if (events.length === 0) {
+      return (
+        <div style={{ color: 'var(--text-secondary)', padding: '1.5rem', textAlign: 'center', background: 'var(--splunk-bg)', border: '1px solid var(--splunk-border)', borderRadius: '3px' }}>
+          No timestamps found in matching results to visualize.
         </div>
-        <div className="header-status">
-          <div className="status-indicator">
-            <span className="status-dot"></span>
-            Spring Boot & C++ Daemon Connected
+      );
+    }
+
+    // Bin events by timestamp into 15 bars
+    const times = events.map(e => e.timestamp).sort((a, b) => a - b);
+    const minTime = times[0];
+    const maxTime = times[times.length - 1];
+    const range = Math.max(1, maxTime - minTime);
+    
+    const bins = Array(15).fill(0);
+    events.forEach(e => {
+      const index = Math.min(14, Math.floor(((e.timestamp - minTime) / range) * 15));
+      bins[index]++;
+    });
+
+    const maxBinCount = Math.max(...bins, 1);
+
+    return (
+      <div className="histogram-container">
+        <div className="histogram-bars">
+          {bins.map((count, idx) => {
+            const pct = (count / maxBinCount) * 100;
+            return (
+              <div className="histogram-col" key={idx} title={`${count} events`}>
+                <div 
+                  className="histogram-bar" 
+                  style={{ height: `${Math.max(5, pct)}%`, background: pct > 0 ? 'var(--splunk-green)' : '#2a2f3a' }}
+                />
+                <span className="histogram-tick"></span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="histogram-labels">
+          <span>{formatTime(minTime)}</span>
+          <span>Timeline of matching log event frequencies</span>
+          <span>{formatTime(maxTime)}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="splunk-container">
+      {/* Top Banner Navigation */}
+      <header className="splunk-header">
+        <div className="header-left">
+          <span className="splunk-logo-brand">&gt; splunk &gt;</span>
+          <span className="splunk-app-name">eureka_observability_console</span>
+        </div>
+        <div className="header-right">
+          <div className={`connection-badge ${simulator.running ? 'running' : 'idle'}`}>
+            <span className="pulse-dot"></span>
+            {simulator.running ? 'DYNAMIC INGESTION RUNNING' : 'SYSTEM ONLINE | CONSOLE IDLE'}
+          </div>
+          <div className="header-stat-pill">
+            DAEMON PORT: <span className="highlight">50052</span>
           </div>
         </div>
       </header>
 
-      {/* Metrics Row */}
-      <section className="stats-grid">
-        <div className="card">
-          <div className="card-title">Real-Time Ingestion</div>
-          <div className="card-value">
-            {simulator.running ? `${simulator.ratePerSecond.toLocaleString()} msg/s` : 'Inactive'}
-          </div>
-          <div className="card-subtext">
-            {simulator.running ? 'Mock Queue Simulator Active' : 'Ingestion Pipeline Idle'}
-          </div>
-        </div>
-        <div className="card">
-          <div className="card-title">Total Logs Ingested</div>
-          <div className="card-value">
-            {simulator.totalSimulated.toLocaleString()}
-          </div>
-          <div className="card-subtext">Compacted in AGB format</div>
-        </div>
-        <div className="card">
-          <div className="card-title">Cached Indices</div>
-          <div className="card-value">
-            {cachedFiles.length}
-          </div>
-          <div className="card-subtext">Mapped in Virtual Memory</div>
-        </div>
-        <div className="card">
-          <div className="card-title">Aggregate Cache Size</div>
-          <div className="card-value">
-            {formatBytes(cachedFiles.reduce((acc, f) => acc + f.sizeBytes, 0))}
-          </div>
-          <div className="card-subtext">Pinned in Physical RAM</div>
-        </div>
-      </section>
-
-      {/* Workspace Grid */}
-      <main className="workspace-grid">
+      {/* Main Splunk Console Workspace */}
+      <div className="console-layout">
         
-        {/* Left Column: JIT Query Terminal */}
-        <section className="query-panel">
-          <div className="panel">
-            <div className="panel-header">
-              <h2>⚡ JIT Logical Query Execution Terminal</h2>
-            </div>
+        {/* Search & Controller Area */}
+        <section className="search-section">
+          <div className="search-bar-row">
+            <span className="search-icon-badge">SPL</span>
+            <input 
+              type="text" 
+              className="search-input" 
+              value={queryText}
+              onChange={e => setQueryText(e.target.value)}
+              placeholder="e.g. status == 500 AND latency > 100"
+            />
             
-            <div className="input-group">
-              <label>Log Data Target Path (Local Absolute or Cloud URI)</label>
+            <select className="time-picker">
+              <option>All time (real-time)</option>
+              <option>Last 15 minutes</option>
+              <option>Last hour</option>
+              <option>Last 24 hours</option>
+            </select>
+
+            <button 
+              className={`search-btn ${querying ? 'loading' : ''}`}
+              onClick={handleRunQuery}
+              disabled={querying}
+            >
+              {querying ? 'Scanning...' : 'Search'}
+            </button>
+          </div>
+
+          <div className="search-options-row">
+            <div className="option-item">
+              <label>Log Store Target:</label>
               <input 
                 type="text" 
-                className="input-field" 
+                className="target-path-input"
                 value={filePath}
                 onChange={e => setFilePath(e.target.value)}
                 placeholder="e.g. s3://eureka-logs/benchmark_native_scan.agb"
               />
             </div>
-            
-            <div className="input-group" style={{ marginTop: '1rem' }}>
-              <label>Bit-Sliced JIT Logic Query Predicate</label>
-              <textarea 
-                className="terminal-input"
-                rows={3}
-                value={queryText}
-                onChange={e => setQueryText(e.target.value)}
-                placeholder="e.g. status == 500 AND latency > 200"
-              />
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label className="checkbox-group">
+            <div className="option-item checkbox">
+              <label className="checkbox-label">
                 <input 
                   type="checkbox" 
                   checked={pinMemory} 
                   onChange={e => setPinMemory(e.target.checked)} 
                 />
-                Pin Mapped Memory Pages in RAM (mlock)
+                Pin mapped virtual memory (mlock)
               </label>
-              
-              <button 
-                className="btn" 
-                onClick={handleRunQuery}
-                disabled={querying}
-              >
-                {querying ? (
-                  <>
-                    <span className="status-dot spinning"></span>
-                    Executing...
-                  </>
-                ) : (
-                  'Run JIT Scan'
-                )}
-              </button>
             </div>
-
-            {queryResult && (
-              <div className="results-console">
-                <div className="panel-header" style={{ marginBottom: '1rem', border: 'none' }}>
-                  <h3>Scan Results</h3>
-                </div>
-
-                {queryResult.errorMessage ? (
-                  <div style={{ color: 'var(--accent-red)', fontSize: '0.95rem' }}>
-                    <strong>Error:</strong> {queryResult.errorMessage}
-                  </div>
-                ) : (
-                  <>
-                    <div className="metric-bar">
-                      <div className="metric-item">
-                        <div className="metric-lbl">Total Matches</div>
-                        <div className="metric-val">{queryResult.totalMatches.toLocaleString()}</div>
-                      </div>
-                      <div className="metric-item">
-                        <div className="metric-lbl">Bytes Processed</div>
-                        <div className="metric-val">{formatBytes(queryResult.bytesProcessed)}</div>
-                      </div>
-                      <div className="metric-item">
-                        <div className="metric-lbl">Scan Bandwidth</div>
-                        <div className="metric-val speed">{queryResult.speedGbSec.toFixed(2)} GB/s</div>
-                      </div>
-                      <div className="metric-item">
-                        <div className="metric-lbl">Execution Time</div>
-                        <div className="metric-val time">{queryResult.executionTimeMs.toFixed(2)} ms</div>
-                      </div>
-                    </div>
-                    <div style={{ color: 'var(--accent-green)', fontSize: '0.85rem', textAlign: 'center' }}>
-                      JIT compiled bitslice filter completed successfully at hardware limits!
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
           </div>
         </section>
 
-        {/* Right Column: Configuration & Cached Files */}
-        <section className="side-panels">
-          
-          {/* Pipeline Config & Simulator Panel */}
-          <div className="panel">
-            <div className="panel-header">
-              <h2>⚙️ Ingestion & Simulator Settings</h2>
+        {/* Tab Selection Row */}
+        <div className="tabs-header">
+          <div className="tabs-left">
+            <button 
+              className={`tab-btn ${activeTab === 'events' ? 'active' : ''}`}
+              onClick={() => setActiveTab('events')}
+            >
+              Events ({queryResult?.events?.length || 0})
+            </button>
+            <button 
+              className={`tab-btn ${activeTab === 'visualization' ? 'active' : ''}`}
+              onClick={() => setActiveTab('visualization')}
+              disabled={!queryResult}
+            >
+              Visualization
+            </button>
+            <button 
+              className={`tab-btn ${activeTab === 'config' ? 'active' : ''}`}
+              onClick={() => setActiveTab('config')}
+            >
+              Kafka Ingestion & Settings
+            </button>
+          </div>
+
+          {queryResult && (
+            <div className="tabs-right-stats">
+              <span>Matches: <strong className="stat-highlight">{queryResult.totalMatches.toLocaleString()}</strong></span>
+              <span className="divider">|</span>
+              <span>Latency: <strong className="stat-highlight text-green">{queryResult.executionTimeMs.toFixed(2)} ms</strong></span>
+              <span className="divider">|</span>
+              <span>Speed: <strong className="stat-highlight text-cyan">{queryResult.speedGbSec.toFixed(2)} GB/s</strong></span>
+              <span className="divider">|</span>
+              <span>Processed: <strong className="stat-highlight">{formatBytes(queryResult.bytesProcessed)}</strong></span>
             </div>
-            
-            <form onSubmit={handleSaveConfig}>
-              <div className="form-grid">
-                <div className="input-group">
-                  <label>Kafka Brokers</label>
-                  <input 
-                    type="text" 
-                    className="input-field" 
-                    value={config.bootstrapServers}
-                    onChange={e => setConfig({ ...config, bootstrapServers: e.target.value })}
-                  />
-                </div>
-                <div className="input-group">
-                  <label>Topic</label>
-                  <input 
-                    type="text" 
-                    className="input-field" 
-                    value={config.topic}
-                    onChange={e => setConfig({ ...config, topic: e.target.value })}
-                  />
-                </div>
+          )}
+        </div>
+
+        {/* Dynamic Display Panels */}
+        {activeTab === 'events' && (
+          <div className="workspace-panels">
+            {/* Sidebar: Fields Panel */}
+            <aside className="fields-sidebar">
+              <div className="sidebar-group">
+                <h3>Selected Fields</h3>
+                <ul className="fields-list">
+                  <li onClick={() => handleFieldClick('host')}>
+                    <span className="field-name">host</span>
+                    <span className="field-count">5</span>
+                  </li>
+                  <li onClick={() => handleFieldClick('source')}>
+                    <span className="field-name">source</span>
+                    <span className="field-count">2</span>
+                  </li>
+                </ul>
               </div>
 
-              <div className="form-grid">
-                <div className="input-group">
-                  <label>Target databasePath</label>
-                  <input 
-                    type="text" 
-                    className="input-field" 
-                    value={config.databasePath}
-                    onChange={e => setConfig({ ...config, databasePath: e.target.value })}
-                  />
+              <div className="sidebar-group" style={{ marginTop: '1.5rem' }}>
+                <h3>Interesting Fields</h3>
+                <ul className="fields-list">
+                  <li onClick={() => handleFieldClick('level')}>
+                    <span className="field-name">level</span>
+                    <span className="field-count">4</span>
+                  </li>
+                  <li onClick={() => handleFieldClick('status')}>
+                    <span className="field-name">status</span>
+                    <span className="field-count">6</span>
+                  </li>
+                  <li onClick={() => handleFieldClick('latency')}>
+                    <span className="field-name">latency</span>
+                    <span className="field-count">#</span>
+                  </li>
+                  <li onClick={() => handleFieldClick('trace_id')}>
+                    <span className="field-name">trace_id</span>
+                    <span className="field-count">a</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Cache explorer nested in sidebar */}
+              <div className="sidebar-cache-box">
+                <h3>Scratch Cache Files</h3>
+                <div className="sidebar-cache-list">
+                  {cachedFiles.map(file => (
+                    <div className="cache-file-pill" key={file.fileName} title={file.absolutePath}>
+                      <span className="pill-name">{file.fileName.length > 25 ? '...' + file.fileName.substring(file.fileName.length - 25) : file.fileName}</span>
+                      <span className="pill-size">{formatBytes(file.sizeBytes)}</span>
+                    </div>
+                  ))}
+                  {cachedFiles.length === 0 && <span className="empty-text">No cached indices.</span>}
                 </div>
-                <div className="input-group">
-                  <label>Pipeline State</label>
-                  <label className="checkbox-group" style={{ height: '100%', alignItems: 'center' }}>
+              </div>
+            </aside>
+
+            {/* Main Center Events View */}
+            <main className="events-main">
+              {/* Field quick dialog overlay */}
+              {selectedFieldInfo && (
+                <div className="field-stats-modal">
+                  <div className="modal-header">
+                    <h4>Field Stats: <span className="modal-field-name">{selectedFieldInfo.name}</span></h4>
+                    <button className="close-btn" onClick={() => setSelectedFieldInfo(null)}>&times;</button>
+                  </div>
+                  <div className="modal-body">
+                    <p className="summary-text">Values distribution in matching records ({selectedFieldInfo.total} events):</p>
+                    <div className="stats-bars-list">
+                      {Object.entries(selectedFieldInfo.values).map(([val, count]) => {
+                        const pct = selectedFieldInfo.total > 0 ? (count / selectedFieldInfo.total) * 100 : 0
+                        return (
+                          <div className="stats-bar-row" key={val} onClick={() => {
+                            appendSearchCondition(selectedFieldInfo.name, val)
+                            setSelectedFieldInfo(null)
+                          }}>
+                            <div className="bar-label">
+                              <span className="bar-val-text">{val}</span>
+                              <span className="bar-count-text">{count} ({pct.toFixed(1)}%)</span>
+                            </div>
+                            <div className="bar-outer">
+                              <div className="bar-inner" style={{ width: `${pct}%` }}></div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Event results list */}
+              <div className="events-list-container">
+                {queryResult?.errorMessage && (
+                  <div className="search-error-banner">
+                    <strong>Search Error:</strong> {queryResult.errorMessage}
+                  </div>
+                )}
+
+                {queryResult && queryResult.events && queryResult.events.length > 0 ? (
+                  <div className="events-table-view">
+                    <div className="events-table-header">
+                      <div className="th-col index">#</div>
+                      <div className="th-col time">Time</div>
+                      <div className="th-col event">Event</div>
+                    </div>
+
+                    <div className="events-table-body">
+                      {queryResult.events.map((log, idx) => {
+                        const isExpanded = !!expandedEvents[idx]
+                        return (
+                          <div className={`event-row-wrapper ${isExpanded ? 'expanded' : ''}`} key={idx}>
+                            <div className="event-row-summary" onClick={() => toggleEventExpand(idx)}>
+                              <div className="td-col index">
+                                <span className={`expand-chevron ${isExpanded ? 'expanded' : ''}`}>&#9654;</span>
+                                {idx + 1}
+                              </div>
+                              <div className="td-col time">{formatTime(log.timestamp)}</div>
+                              <div className="td-col event-raw">
+                                {renderHighlightEventJson(log)}
+                              </div>
+                            </div>
+
+                            {/* Event details drawer */}
+                            {isExpanded && (
+                              <div className="event-expanded-details">
+                                <table className="parsed-fields-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Field</th>
+                                      <th>Value</th>
+                                      <th>Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {Object.entries(log).map(([key, value]) => (
+                                      <tr key={key}>
+                                        <td className="field-key">{key}</td>
+                                        <td className="field-value">{String(value)}</td>
+                                        <td>
+                                          <button 
+                                            className="action-link-btn" 
+                                            onClick={() => appendSearchCondition(key, value)}
+                                            title="Add this filter to search query"
+                                          >
+                                            Add to search
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="empty-results-banner">
+                    {!queryResult ? 'Write a query and click Search to scan binary logs.' : 'No log lines match the filter predicates.'}
+                  </div>
+                )}
+              </div>
+            </main>
+          </div>
+        )}
+
+        {activeTab === 'visualization' && (
+          <div className="panel splunk-panel">
+            <h2>📊 JIT Compiled Search Event Density Over Time</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+              Splunk-like chronological visualization of filtered log hits parsed dynamically from memory.
+            </p>
+            {renderHistogram()}
+          </div>
+        )}
+
+        {activeTab === 'config' && (
+          <div className="config-tab-panels">
+            {/* Kafka Config Panel */}
+            <div className="panel splunk-panel">
+              <div className="panel-header">
+                <h2>⚙️ Kafka Pipeline Configuration Settings</h2>
+              </div>
+              <form onSubmit={handleSaveConfig}>
+                <div className="form-grid">
+                  <div className="input-group">
+                    <label>Bootstrap Brokers</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      value={config.bootstrapServers}
+                      onChange={e => setConfig({ ...config, bootstrapServers: e.target.value })}
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label>Topic</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      value={config.topic}
+                      onChange={e => setConfig({ ...config, topic: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-grid">
+                  <div className="input-group">
+                    <label>Consumer Group ID</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      value={config.groupId}
+                      onChange={e => setConfig({ ...config, groupId: e.target.value })}
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label>Flush Batch Size</label>
+                    <input 
+                      type="number" 
+                      className="input-field" 
+                      value={config.batchSize}
+                      onChange={e => setConfig({ ...config, batchSize: parseInt(e.target.value) || 1000 })}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-grid">
+                  <div className="input-group">
+                    <label>Compile Flush Interval (ms)</label>
+                    <input 
+                      type="number" 
+                      className="input-field" 
+                      value={config.flushIntervalMs}
+                      onChange={e => setConfig({ ...config, flushIntervalMs: parseInt(e.target.value) || 500 })}
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label>Target Compact Database File (.agb)</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      value={config.databasePath}
+                      onChange={e => setConfig({ ...config, databasePath: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-grid" style={{ alignItems: 'center', marginTop: '0.5rem' }}>
+                  <label className="checkbox-group">
                     <input 
                       type="checkbox" 
                       checked={config.active}
                       onChange={e => setConfig({ ...config, active: e.target.checked })}
                     />
-                    Kafka Consumer Active
+                    Kafka Ingestion Consumer Active
                   </label>
+
+                  <button type="submit" className="btn btn-secondary" style={{ width: '100%' }} disabled={savingConfig}>
+                    {savingConfig ? 'Saving Configurations...' : 'Apply & Restart Consumer'}
+                  </button>
                 </div>
+              </form>
+            </div>
+
+            {/* Ingestion Simulator Panel */}
+            <div className="panel splunk-panel">
+              <div className="panel-header">
+                <h2>⚡ High-Throughput Log Stream Simulator</h2>
               </div>
-
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '1.25rem' }}>
-                <button type="submit" className="btn btn-secondary" style={{ flex: 1 }} disabled={savingConfig}>
-                  {savingConfig ? 'Saving...' : 'Apply Config'}
-                </button>
-              </div>
-            </form>
-
-            <hr style={{ border: 'none', borderBottom: '1px solid var(--border-color)', margin: '1.5rem 0' }} />
-
-            <div>
-              <h3>Mock Queue Simulator</h3>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '-0.5rem 0 1rem' }}>
-                Simulate continuous log generation to test live indexing speeds.
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '-0.75rem', marginBottom: '1.5rem' }}>
+                Simulate an active message queue stream directly feeding raw log payloads to your ingestion pipeline.
               </p>
 
-              <div className="form-grid" style={{ marginBottom: '1.25rem' }}>
+              <div className="form-grid" style={{ alignItems: 'center' }}>
                 <div className="input-group">
-                  <label>Simulation Rate (msgs/sec)</label>
+                  <label>Simulation Rate (Messages / Sec)</label>
                   <input 
                     type="number" 
                     className="input-field" 
                     value={simulator.ratePerSecond}
-                    onChange={e => setSimulator({ ...simulator, ratePerSecond: parseInt(e.target.value) || 1000 })}
+                    onChange={e => setSimulator({ ...simulator, ratePerSecond: parseInt(e.target.value) || 5000 })}
                     disabled={simulator.running}
                   />
                 </div>
-                <div className="input-group" style={{ justifyContent: 'flex-end' }}>
+                <div className="input-group">
                   <button 
                     onClick={handleToggleSimulator}
-                    className={`btn ${simulator.running ? 'btn-danger' : ''}`}
-                    style={{ width: '100%' }}
+                    className={`btn ${simulator.running ? 'btn-danger' : 'btn-success-splunk'}`}
                     disabled={togglingSimulator}
+                    style={{ height: '2.5rem', marginTop: '1.3rem' }}
                   >
-                    {togglingSimulator ? 'Connecting...' : (simulator.running ? 'Stop Ingestion' : 'Start Ingestion')}
+                    {togglingSimulator ? 'Connecting...' : (simulator.running ? 'Stop Log Generation' : 'Start Log Generation')}
                   </button>
+                </div>
+              </div>
+
+              <div className="simulator-stats-display" style={{ marginTop: '1.5rem' }}>
+                <div className="sim-stat-box">
+                  <span className="lbl">SIMULATION STATE</span>
+                  <span className={`val ${simulator.running ? 'text-green' : 'text-red'}`}>
+                    {simulator.running ? 'ACTIVE INGESTION' : 'INACTIVE'}
+                  </span>
+                </div>
+                <div className="sim-stat-box">
+                  <span className="lbl">TOTAL SIMULATED EVENTS</span>
+                  <span className="val">{simulator.totalSimulated.toLocaleString()}</span>
                 </div>
               </div>
             </div>
           </div>
+        )}
 
-          {/* Cache Explorer Panel */}
-          <div className="panel">
-            <div className="panel-header">
-              <h2>🗄️ Local Scratch Cache Directory</h2>
-            </div>
-            
-            {cachedFiles.length === 0 ? (
-              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', textAlign: 'center', padding: '1.5rem 0' }}>
-                Scratch directory is empty. Run S3 queries or ingest logs to cache files.
-              </div>
-            ) : (
-              <div className="file-list">
-                {cachedFiles.map(file => (
-                  <div className="file-item" key={file.fileName}>
-                    <div className="file-info">
-                      <span className="file-name">{file.fileName}</span>
-                      <span className="file-meta">
-                        Size: {formatBytes(file.sizeBytes)} | Staged: {new Date(file.lastModified).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-        </section>
-      </main>
+      </div>
     </div>
   )
 }

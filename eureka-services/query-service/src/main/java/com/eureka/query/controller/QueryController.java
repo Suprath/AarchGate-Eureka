@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,16 @@ public class QueryController {
         if (response.getErrorMessage() != null && !response.getErrorMessage().isEmpty()) {
             return ResponseEntity.badRequest().body(result);
         }
+
+        // Fetch matching event text lines to serve the events viewer
+        try {
+            List<Map<String, Object>> events = queryExecutionService.getMatchingEvents(query, filePath);
+            result.put("events", events);
+        } catch (Exception e) {
+            result.put("events", new ArrayList<>());
+            System.err.println("[QueryController] Failed to extract matching log events: " + e.getMessage());
+        }
+
         return ResponseEntity.ok(result);
     }
 
