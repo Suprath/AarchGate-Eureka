@@ -1,0 +1,14 @@
+# Stage 1: Build
+FROM alpine:3.19 AS builder
+RUN apk add --no-cache build-base cmake protobuf-dev grpc-dev git linux-headers
+WORKDIR /src
+COPY . .
+RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
+
+# Stage 2: Runtime
+FROM alpine:3.19
+RUN apk add --no-cache libstdc++ grpc protobuf
+WORKDIR /app
+COPY --from=builder /src/build/bin/aarchgate-core-grpc .
+EXPOSE 50052
+ENTRYPOINT ["./aarchgate-core-grpc"]

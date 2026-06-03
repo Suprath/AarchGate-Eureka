@@ -200,3 +200,93 @@ Evaluating `status == 500 AND latency > 100 AND severity == 3` on 4 performance 
 > If your system has low free physical RAM (under ~2 GB), running benchmarks with large datasets (e.g., 10 GB) will force the macOS pager to write memory blocks to SSD swap, capping execution speeds to SSD limits (**~0.36 GB/s**). 
 > 
 > Keep the benchmark dataset sized to **1.86 GB** to bypass paging and verify the true **74+ GB/s physical memory-bus speed** of your Mac!
+
+---
+
+## 🐳 Cloud-Native Loki-Compatible Gateway (Spring Boot & C++ Sidecar)
+
+AarchGate-Eureka includes a **stateless, cloud-native API gateway** located under [eureka-services/query-service](file:///Users/suprathps/code/AarchGate-Eureka/eureka-services/query-service/). It exposes industry-standard **Grafana Loki-compatible REST and WebSocket endpoints**, allowing Grafana to directly query and ingest logs from AarchGate at scale.
+
+```
+ ┌─────────────────────────────────────────────── Kubernetes Pod ──────────────────────────────────────────────┐
+ │                                                                                                             │
+ │  ┌─────────────────────────────────┐   Local gRPC   ┌─────────────────────────────────┐                     │
+ │  │      Spring Boot Gateway        │ ─────────────> │       C++ Core Database         │                     │
+ │  │      (Loki API & Ingestion)     │ <───────────── │        (APEX JIT Engine)        │                     │
+ │  └─────────────────────────────────┘  (localhost)   └─────────────────────────────────┘                     │
+ │                   │                                                  │                                      │
+ │                   ▼                                                  ▼                                      │
+ │            Mounts: /scratch                                   Mounts: /scratch                              │
+ │                   │                                                  │                                      │
+ │                   └─────────────────── Shared RAM-disk tmpfs Volume ────────────────────────────────┘       │
+ │                                       (Zero-copy IPC, Fast Cache & Mapped AGBs)                             │
+ │                                                                                                             │
+ └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 📡 API Endpoints Summary
+
+*   **`GET /ready`**: Health check probe (returns `200 OK` once gRPC client connection is established).
+*   **`GET /loki/api/v1/labels`**: Returns metadata labels (`job`, `level`, `host`, `status`, `latency`).
+*   **`GET /loki/api/v1/label/{name}/values`**: Autocomplete list of values for each label index.
+*   **`POST /loki/api/v1/push`**: Ingests NDJSON streams from log agents (e.g. OpenTelemetry, FluentBit). Groups and batches logs to prevent write amplification, writes to C++ Core, and broadcasts to active WebSockets in-memory.
+*   **`GET /loki/api/v1/query_range`**: Translates incoming LogQL queries via [LogQLParser](file:///Users/suprathps/code/AarchGate-Eureka/eureka-services/query-service/src/main/java/com/eureka/query/service/LogQLParser.java) and queries the memory-mapped `.agb` database core.
+*   **`GET /loki/api/v1/tail` (WebSockets)**: Low-latency live tail streaming directly to Grafana Explore.
+*   **`POST /simulator/start?rate=10`**: Triggers [MockIngestionSimulator](file:///Users/suprathps/code/AarchGate-Eureka/eureka-services/query-service/src/main/java/com/eureka/query/service/MockIngestionSimulator.java) to emit logs at a defined frequency for real-time WebSocket live-tail testing.
+*   **`POST /simulator/stop`**: Stops the log generation simulator.
+
+---
+
+## 🛠️ Step-by-Step Local Microservice Test Run
+
+1.  **Launch the C++ gRPC Core Service**:
+    ```bash
+    ./build/aarchgate-core-grpc
+    ```
+2.  **Start the Spring Boot Gateway**:
+    ```bash
+    ./eureka-services/query-service/gradlew -p ./eureka-services/query-service bootRun
+    ```
+3.  **Establish Live Tail WebSocket (Chrome/Safari Dev Console on `http://localhost:8080/ready`)**:
+    ```javascript
+    const query = encodeURIComponent('{job="aarchgate-live-tail"}');
+    const ws = new WebSocket(`ws://localhost:8080/loki/api/v1/tail?query=${query}`);
+    ws.onopen = () => console.log("🚀 [WebSocket] Connected to AarchGate Live Tail!");
+    ws.onmessage = (e) => console.log("📺 [WebSocket] Log Stream:", JSON.parse(e.data));
+    ws.onclose = () => console.log("🔌 [WebSocket] Connection Closed.");
+    ```
+4.  **Start Mock Traffic**:
+    ```bash
+    curl -X POST "http://localhost:8080/simulator/start?rate=10"
+    ```
+5.  **Query the Stored Index**:
+    ```bash
+    curl -G -s "http://localhost:8080/loki/api/v1/query_range" --data-urlencode "query={job=\"aarchgate-query\", status=\"500\"}" | json_pp
+    ```
+
+---
+
+## 🐳 Kubernetes Local Cluster Simulation (Kind / Minikube)
+
+1.  **Build local container images**:
+    ```bash
+    docker build -t aarchgate-gateway:local -f eureka-services/query-service/Dockerfile .
+    docker build -t aarchgate-core:local -f Dockerfile.core .
+    ```
+2.  **Spin up Kind Cluster & load images**:
+    ```bash
+    kind create cluster --name aarchgate-test
+    kind load docker-image aarchgate-gateway:local --name aarchgate-test
+    kind load docker-image aarchgate-core:local --name aarchgate-test
+    ```
+3.  **Apply Sidecar Manifest**:
+    Configure [k8s/deployment.yaml](file:///Users/suprathps/code/AarchGate-Eureka/k8s/deployment.yaml) to point to the local image tags (`aarchgate-gateway:local` and `aarchgate-core:local` with `imagePullPolicy: Never`) and deploy:
+    ```bash
+    kubectl apply -f k8s/deployment.yaml
+    ```
+4.  **Verify Pods & Port Forward**:
+    ```bash
+    kubectl get pods
+    kubectl port-forward deployment/aarchgate-log-engine 8080:8080
+    ```
+

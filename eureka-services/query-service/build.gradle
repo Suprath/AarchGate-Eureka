@@ -18,13 +18,11 @@ repositories {
 dependencies {
     implementation platform('org.springframework.boot:spring-boot-dependencies:3.4.0')
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    
-    // Spring Data JPA & In-Memory H2 Database
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'com.h2database:h2'
-
     // Spring Kafka for Ingestion Pipeline
     implementation 'org.springframework.kafka:spring-kafka'
+    
+    // Spring WebSocket for Live Tail
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
     
     // gRPC and Protobuf
     implementation 'io.grpc:grpc-netty-shaded:1.62.2'
@@ -33,6 +31,7 @@ dependencies {
     compileOnly 'org.glassfish:javax.annotation:10.0-b28'
     
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 protobuf {
@@ -65,47 +64,4 @@ sourceSets {
 
 tasks.named('test') {
     useJUnitPlatform()
-}
-
-// Custom tasks to compile and build the frontend React application
-task npmInstall(type: Exec) {
-    workingDir 'frontend'
-    inputs.file('frontend/package.json')
-    outputs.dir('frontend/node_modules')
-    
-    if (System.getProperty('os.name').toLowerCase().contains('windows')) {
-        commandLine 'npm.cmd', 'install'
-    } else {
-        commandLine 'zsh', '-l', '-c', 'npm install'
-    }
-}
-
-task npmBuild(type: Exec) {
-    dependsOn npmInstall
-    workingDir 'frontend'
-    inputs.dir('frontend/src')
-    inputs.file('frontend/package.json')
-    inputs.file('frontend/tsconfig.json')
-    inputs.file('frontend/vite.config.ts')
-    inputs.file('frontend/index.html')
-    outputs.dir('frontend/dist')
-
-    if (System.getProperty('os.name').toLowerCase().contains('windows')) {
-        commandLine 'npm.cmd', 'run', 'build'
-    } else {
-        commandLine 'zsh', '-l', '-c', 'npm run build'
-    }
-}
-
-task copyFrontendToStatic(type: Copy) {
-    dependsOn npmBuild
-    from 'frontend/dist'
-    into 'src/main/resources/static'
-}
-
-processResources.dependsOn copyFrontendToStatic
-
-clean {
-    delete 'src/main/resources/static'
-    delete 'frontend/dist'
 }

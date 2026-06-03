@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aarchgate-log-engine
+  labels:
+    app: aarchgate-log-engine
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: aarchgate-log-engine
+  template:
+    metadata:
+      labels:
+        app: aarchgate-log-engine
+    spec:
+      volumes:
+        - name: shared-scratch
+          emptyDir:
+            medium: Memory  # Creates a high-speed tmpfs RAM-disk in RAM
+            sizeLimit: 8Gi  # Prevents runaway indexing from exhausting host memory
+      containers:
+        # 1. Spring Boot Gateway Container
+        - name: gateway
+          image: ghcr.io/suprath/aarchgate-gateway:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AARCHGATE_CORE_HOST
+              value: "127.0.0.1" # Standard localhost networking in Kubernetes Pods
+            - name: AARCHGATE_CORE_PORT
+              value: "50052"
+            - name: AARCHGATE_SCRATCH_DIR
+              value: "/scratch"
+            - name: AARCHGATE_MAX_CACHE_GB
+              value: "6"
+            - name: KAFKA_ENABLED
+              value: "true"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-cluster-kafka-bootstrap.kafka.svc:9092"
+            - name: KAFKA_TOPIC
+              value: "production-logs"
+          volumeMounts:
+            - name: shared-scratch
+              mountPath: /scratch
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+        # 2. C++ Core Search Container (Sidecar)
+        - name: core-database
+          image: ghcr.io/suprath/aarchgate-core:latest
+          ports:
+            - containerPort: 50052
+          securityContext:
+            capabilities:
+              add:
+                - IPC_LOCK # Required to call mlock() and lock mapped buffers in RAM
+          volumeMounts:
+            - name: shared-scratch
+              mountPath: /scratch
+          resources:
+            limits:
+              cpu: "4"
+              memory: 8Gi
+            requests:
+              cpu: "2"
+              memory: 4Gi

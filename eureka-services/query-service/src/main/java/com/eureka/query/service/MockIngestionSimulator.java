@@ -19,12 +19,14 @@ public class MockIngestionSimulator {
     private int ratePerSecond = 5000;
     private String databasePath = "live_stream.agb";
     
+    private final RealTimeLogBroadcaster broadcaster;
     private final Random random = new Random();
     private long totalSimulated = 0;
 
     @Autowired
-    public MockIngestionSimulator(@Lazy QueryExecutionService queryExecutionService) {
+    public MockIngestionSimulator(@Lazy QueryExecutionService queryExecutionService, RealTimeLogBroadcaster broadcaster) {
         this.queryExecutionService = queryExecutionService;
+        this.broadcaster = broadcaster;
     }
 
     public synchronized void start(int ratePerSecond, String databasePath) {
@@ -84,6 +86,10 @@ public class MockIngestionSimulator {
         }
 
         try {
+            // 1. Send live stream updates to WebSocket subscribers
+            broadcaster.broadcastLogs(logs);
+
+            // 2. Transcode and write to database core
             queryExecutionService.ingestLogLines(databasePath, logs);
             totalSimulated += batchSize;
         } catch (Exception e) {
